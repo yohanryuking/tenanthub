@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Local development database only. Nothing here is used in CI or
+# production — see docs/architecture.md for how those environments differ.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tenanthub-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tenanthub_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - tenanthub_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tenanthub_pg_data:

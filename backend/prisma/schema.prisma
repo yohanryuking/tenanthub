@@ -1,0 +1,111 @@
+// TenantHub — Phase 1 data model
+// Isolation between organizations is enforced by PostgreSQL Row-Level
+// Security (see prisma/migrations/**/migration.sql for the RLS policies),
+// not by application-level WHERE clauses. Prisma only describes shape here;
+// the RLS migration is the actual security boundary.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  admin
+  member
+}
+
+enum Plan {
+  free
+  pro
+}
+
+/// Organizations are the tenant boundary. Every tenant-scoped table below
+/// carries an orgId column that RLS policies key off of.
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  plan      Plan     @default(free)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships Membership[]
+  tasks       Task[]
+  auditLogs   AuditLog[]
+
+  @@map("organizations")
+}
+
+/// Users are global (not tenant-scoped) — the same person can belong to
+/// several organizations, each represented by its own Membership row.
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships Membership[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+/// Join table between User and Organization, carrying the role the user
+/// holds inside that organization. This is what lets one user act inside
+/// several organizations with different permissions in each.
+model Membership {
+  id        String         @id @default(uuid()) @db.Uuid
+  orgId     String         @map("org_id") @db.Uuid
+  userId    String         @map("user_id") @db.Uuid
+  role      MembershipRole @default(member)
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+  @@map("memberships")
+}
+
+/// Sample business domain used to prove/exercise tenant isolation.
+/// This is the table that Sprint 3 turns into the real product feature.
+model Task {
+  id          String   @id @default(uuid()) @db.Uuid
+  orgId       String   @map("org_id") @db.Uuid
+  title       String
+  description String?
+  done        Boolean  @default(false)
+  createdBy   String   @map("created_by") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("tasks")
+}
+
+/// Append-only audit trail, isolated per org via RLS exactly like every
+/// other tenant-scoped table. Populated starting Sprint 5; the table and
+/// its policies exist from Phase 1 so later work only adds write paths.
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  actorId   String?  @map("actor_id") @db.Uuid
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id") @db.Uuid
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId])
+  @@map("audit_log")
+}
