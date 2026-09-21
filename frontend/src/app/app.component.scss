@@ -1,0 +1,31 @@
+.shell {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  color: #1f2933;
+}
+
+.subtitle {
+  color: #52606d;
+}
+
+.status {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.status h2 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+code {
+  background: #eef2f6;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
