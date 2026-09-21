@@ -53,18 +53,41 @@ haya escrito quien la haya escrito.
 
 ## Qué NO cubre este modelo de amenazas todavía (riesgo residual documentado)
 
-- **Rate limiting / fuerza bruta sobre `/auth/login`**: no implementado.
-  Un atacante podría intentar muchas combinaciones de password. Mitigar en
-  Sprint 2 (throttling por IP/email).
+- **Rate limiting / fuerza bruta sobre `/auth/login` y `/auth/refresh`**:
+  no implementado todavía. Un atacante podría intentar muchas
+  combinaciones de password, o intentar adivinar refresh tokens (poco
+  práctico dado que son 32 bytes aleatorios, pero rate limiting es
+  defensa en profundidad igual). Pendiente.
 - **Rotación de `JWT_SECRET`**: un secreto filtrado permite forjar tokens
-  para cualquier org/rol. No hay rotación ni lista de revocación todavía;
-  la ventana de exposición hoy es como máximo `JWT_EXPIRES_IN` (8h).
+  para cualquier org/rol. No hay rotación ni lista de revocación
+  todavía; la ventana de exposición de un access token forjado es ahora
+  como máximo `JWT_EXPIRES_IN` (15 min desde Sprint 2, antes 8h) — bastante
+  más chica, pero sigue existiendo mientras el secreto esté filtrado.
+- **Reuso de un refresh token ya consumido no dispara ninguna alarma**:
+  la rotación (ADR 0005) hace que reusar un token viejo falle con 401,
+  pero eso es todo lo que pasa — no se revoca el resto de la sesión ni se
+  notifica a nadie. Un sistema más maduro trataría "alguien reusó un
+  token ya rotado" como señal fuerte de robo (alguien tiene una copia
+  vieja del token) y revocaría toda la cadena de refresh tokens de ese
+  usuario/org. No implementado.
+- **Tokens en `localStorage` en el frontend**: tanto el access token como
+  el refresh token viven en `localStorage` (`AuthService`, Sprint 2).
+  Cualquier XSS en la app puede robarlos. Mitigación real (mover el
+  refresh token a una cookie `httpOnly` seteada por el backend) queda
+  como trabajo futuro — documentado, no resuelto.
+- **El token de invitación viaja en la respuesta HTTP de
+  `POST /organizations/invitations`**, no solo por email (porque no hay
+  proveedor de email configurado). Quien pueda leer esa respuesta o los
+  logs del servidor (donde también se loguea, a propósito, para poder
+  demostrarlo sin SMTP) tiene el token. Aceptable para una demo; en
+  producción con email real, dejar de devolverlo en el body.
 - **Las funciones `SECURITY DEFINER`** son, por diseño, el único punto
   donde una query cruza tenants. Son el activo de mayor sensibilidad del
   esquema: cualquier cambio a ellas debería revisarse con el mismo
-  cuidado que un cambio a una policy de RLS. Hoy solo existen las dos que
-  necesita login, y ambas están limitadas a los parámetros exactos
-  recibidos (no exponen listados).
+  cuidado que un cambio a una policy de RLS. Desde Sprint 2 son siete
+  (login, listado de orgs, registro, lookup/accept de invitación, emitir/
+  consumir/revocar refresh token), todas limitadas a los parámetros
+  exactos recibidos (nunca exponen un listado abierto).
 - **`users` no tiene RLS**: es intencional (ver `architecture.md`), pero
   significa que cualquier consulta directa a esa tabla desde código nuevo
   no tiene ninguna protección de tenant — no debería necesitarla, porque
@@ -94,3 +117,12 @@ que falla:
 Estos tests corren en CI en cada push/PR
 (`.github/workflows/backend-ci.yml`). Si alguno empieza a fallar, es una
 regresión de seguridad, no un test flaky — tratarlo como P0.
+
+`backend/test/auth/auth.e2e-spec.ts` (Sprint 2) complementa esto a nivel
+de API en vez de SQL directo: entre otros casos, confirma que un token de
+la organización A nunca devuelve tareas de la organización B a través del
+endpoint HTTP (no solo por consulta directa), que una invitación no puede
+aceptarse dos veces, que un `member` no puede invitar (403), y que un
+refresh token usado dos veces falla la segunda vez. Es la misma disciplina
+de "probar que el ataque falla", aplicada a los flujos que Sprint 2
+agregó.

@@ -6,23 +6,29 @@ que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
 **PostgreSQL + Prisma** (sin Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-## Estado actual: Fase 1 (Sprint 0 + Sprint 1)
+## Estado actual: Sprint 0, 1 y 2
 
 Implementado y probado:
 
 - Modelo de datos multi-tenant (`organizations`, `users`, `memberships`,
-  `tasks`, `audit_log`) con RLS deny-by-default en cada tabla
-  tenant-scoped.
+  `invitations`, `refresh_tokens`, `tasks`, `audit_log`) con RLS
+  deny-by-default en cada tabla tenant-scoped.
 - Rol de aplicación no-owner (`tenanthub_app`) que RLS realmente
   restringe — el backend nunca se conecta con un rol que bypasse RLS.
 - 7 tests **negativos** de RLS contra Postgres real: intentan leer,
   actualizar, borrar e insertar datos de otro tenant, y verifican que
   todo eso falle.
-- Un login mínimo (JWT scoped a una organización) + un CRUD de ejemplo
-  (`tasks`) que demuestran el aislamiento también a nivel HTTP, de punta
-  a punta.
-- CI que levanta Postgres, aplica migraciones y corre toda la suite en
-  cada push/PR.
+- Onboarding completo: registro (crea org + admin en un paso), login con
+  selector de organización, invitar miembros, aceptar invitación, sesión
+  sostenida con refresh tokens rotados (access token de 15 min).
+- 18 tests e2e sobre HTTP real de los flujos de auth/onboarding, más los
+  7 de RLS — 25 tests de backend en total, todos verificando que un
+  ataque falla, no solo que el camino feliz funciona.
+- Angular con login, registro, aceptar invitación y un dashboard
+  funcional (tareas + invitar), probado de punta a punta en un browser
+  real.
+- CI (backend y frontend) que levanta Postgres, aplica migraciones y
+  corre toda la suite en cada push/PR.
 
 Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
 **[docs/roadmap.md](docs/roadmap.md)**.
@@ -55,7 +61,7 @@ npm install
 npm start
 ```
 
-Probar el aislamiento:
+Probar el aislamiento (vía API):
 
 ```bash
 curl -X POST localhost:3000/auth/login -H 'Content-Type: application/json' \
@@ -63,6 +69,10 @@ curl -X POST localhost:3000/auth/login -H 'Content-Type: application/json' \
 # copiar accessToken del response
 curl localhost:3000/tasks -H "Authorization: Bearer <accessToken>"
 ```
+
+O directamente en el navegador: `http://localhost:4200/register` para
+crear una organización nueva, o `http://localhost:4200/login` con
+`alice@acme.test` / `password123` / org `acme` (usuarios del seed).
 
 ## Tests
 

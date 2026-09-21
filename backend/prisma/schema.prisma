@@ -33,9 +33,11 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  memberships Membership[]
-  tasks       Task[]
-  auditLogs   AuditLog[]
+  memberships   Membership[]
+  tasks         Task[]
+  auditLogs     AuditLog[]
+  invitations   Invitation[]
+  refreshTokens RefreshToken[]
 
   @@map("organizations")
 }
@@ -49,8 +51,9 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  memberships Membership[]
-  auditLogs   AuditLog[]
+  memberships   Membership[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -88,6 +91,49 @@ model Task {
 
   @@index([orgId])
   @@map("tasks")
+}
+
+/// A pending invitation to join an organization. Created by an admin while
+/// authenticated (normal RLS applies — they can only invite into their own
+/// org). Accepting one is the cross-tenant write handled by the
+/// auth_accept_invitation() SECURITY DEFINER function, since the person
+/// accepting has no session scoped to this org yet.
+model Invitation {
+  id         String         @id @default(uuid()) @db.Uuid
+  orgId      String         @map("org_id") @db.Uuid
+  email      String
+  role       MembershipRole @default(member)
+  tokenHash  String         @unique @map("token_hash")
+  invitedBy  String         @map("invited_by") @db.Uuid
+  expiresAt  DateTime       @map("expires_at")
+  acceptedAt DateTime?      @map("accepted_at")
+  createdAt  DateTime       @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("invitations")
+}
+
+/// Opaque refresh tokens (never JWTs — rotated on every use). Looked up and
+/// rotated exclusively through auth_consume_refresh_token(), never through
+/// the tenant-scoped Prisma client, because refreshing happens before any
+/// tenant context is established for that request.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  orgId     String    @map("org_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@index([userId])
+  @@map("refresh_tokens")
 }
 
 /// Append-only audit trail, isolated per org via RLS exactly like every

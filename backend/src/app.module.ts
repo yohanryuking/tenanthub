@@ -5,6 +5,7 @@ import { TenantModule } from './common/tenant/tenant.module';
 import { HealthController } from './health/health.controller';
 import { AuthModule } from './auth/auth.module';
 import { TasksModule } from './tasks/tasks.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { TasksModule } from './tasks/tasks.module';
     TenantModule,
     AuthModule,
     TasksModule,
+    OrganizationsModule,
   ],
   controllers: [HealthController],
 })

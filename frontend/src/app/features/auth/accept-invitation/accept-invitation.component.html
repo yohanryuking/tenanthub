@@ -1,0 +1,23 @@
+<div class="auth-card">
+  <h1>Aceptar invitación</h1>
+  <p>
+    Si ya tenés cuenta con el email invitado, dejá la contraseña vacía e
+    iniciá sesión normalmente después de aceptar. Si es tu primera vez,
+    elegí una contraseña acá.
+  </p>
+
+  <form [formGroup]="form" (ngSubmit)="submit()">
+    <label>
+      Contraseña (solo si es tu primera vez)
+      <input type="password" formControlName="password" autocomplete="new-password" />
+    </label>
+
+    @if (error()) {
+      <p class="error">{{ error() }}</p>
+    }
+
+    <button type="submit" [disabled]="submitting()">
+      {{ submitting() ? 'Aceptando…' : 'Aceptar invitación' }}
+    </button>
+  </form>
+</div>

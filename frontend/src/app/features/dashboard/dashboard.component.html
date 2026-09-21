@@ -1,0 +1,49 @@
+<div class="dashboard">
+  <header>
+    <div>
+      <h1>TenantHub</h1>
+      @if (auth.claims(); as claims) {
+        <p class="claims">org: <code>{{ claims.orgId }}</code> · rol: <code>{{ claims.role }}</code></p>
+      }
+    </div>
+    <button class="logout" (click)="logout()">Salir</button>
+  </header>
+
+  <section class="card">
+    <h2>Tareas</h2>
+
+    <form [formGroup]="taskForm" (ngSubmit)="addTask()" class="inline-form">
+      <input type="text" formControlName="title" placeholder="Nueva tarea" />
+      <button type="submit">Agregar</button>
+    </form>
+
+    @if (loading()) {
+      <p>Cargando…</p>
+    } @else if (tasks().length === 0) {
+      <p class="empty">Sin tareas todavía.</p>
+    } @else {
+      <ul>
+        @for (task of tasks(); track task.id) {
+          <li>{{ task.title }}</li>
+        }
+      </ul>
+    }
+  </section>
+
+  @if (auth.claims()?.role === 'admin') {
+    <section class="card">
+      <h2>Invitar miembro</h2>
+      <form [formGroup]="inviteForm" (ngSubmit)="invite()" class="inline-form">
+        <input type="email" formControlName="email" placeholder="email@ejemplo.com" />
+        <select formControlName="role">
+          <option value="member">member</option>
+          <option value="admin">admin</option>
+        </select>
+        <button type="submit">Invitar</button>
+      </form>
+      @if (invitationResult()) {
+        <p class="result">{{ invitationResult() }}</p>
+      }
+    </section>
+  }
+</div>

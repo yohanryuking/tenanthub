@@ -1,0 +1,44 @@
+<div class="auth-card">
+  <h1>Iniciar sesión</h1>
+
+  <form [formGroup]="form" (ngSubmit)="submit()">
+    <label>
+      Email
+      <input type="email" formControlName="email" (blur)="onEmailBlur()" autocomplete="email" />
+    </label>
+
+    @if (orgs().length > 1) {
+      <label>
+        Organización
+        <select formControlName="orgSlug">
+          <option value="" disabled>Elegí una organización</option>
+          @for (org of orgs(); track org.org_id) {
+            <option [value]="org.org_slug">{{ org.org_name }}</option>
+          }
+        </select>
+      </label>
+    } @else {
+      <label>
+        Organización (slug)
+        <input type="text" formControlName="orgSlug" placeholder="acme" />
+      </label>
+    }
+
+    <label>
+      Contraseña
+      <input type="password" formControlName="password" autocomplete="current-password" />
+    </label>
+
+    @if (error()) {
+      <p class="error">{{ error() }}</p>
+    }
+
+    <button type="submit" [disabled]="submitting()">
+      {{ submitting() ? 'Ingresando…' : 'Ingresar' }}
+    </button>
+  </form>
+
+  <p class="switch">
+    ¿No tenés cuenta? <a routerLink="/register">Creá tu organización</a>
+  </p>
+</div>

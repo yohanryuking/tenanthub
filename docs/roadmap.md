@@ -53,54 +53,82 @@ no un feature terminado).
 
 ---
 
-## Sprint 2 — Auth y onboarding ⬜
+## Sprint 2 — Auth y onboarding ✅
 
 Objetivo: pasar de "hay un login mínimo" a un flujo de onboarding real.
 
-- [ ] `POST /auth/register`: crea `User` + `Organization` + `Membership`
-      (rol `admin`) en una sola transacción — "regístrate y te creamos tu
-      workspace", como Slack/Notion/Linear.
-- [ ] `GET /auth/orgs?email=...` usando la función SQL
-      `auth_list_orgs_for_email` (ya existe en la migración de Sprint 1,
-      sin endpoint todavía) para que el login pueda ofrecer un selector de
-      organización en vez de pedir el slug a mano.
-- [ ] Invitaciones: `POST /organizations/:id/invitations` (solo `admin`),
-      genera un token de invitación de un solo uso, con expiración.
-      Envío de email fuera de alcance de un entorno real de SMTP — usar
-      un stub/logger en dev, dejar el punto de extensión documentado
-      (mismo patrón que "aquí conectaría Stripe" del Sprint 5).
-- [ ] `POST /auth/invitations/:token/accept`: crea `Membership` para un
-      usuario existente o nuevo.
-- [ ] Refresh tokens / expiración razonable del JWT actual (hoy expira a
-      las 8h sin refresh — suficiente para demo, no para producción).
-- [ ] Angular: pantallas de login, registro, selector de organización,
-      guard de ruta que redirige a `/login` si no hay token válido.
-- [ ] Tests: registro crea exactamente 1 membership con rol admin;
-      invitación expirada no puede aceptarse; un usuario no puede
-      aceptar dos veces la misma invitación.
+- [x] `POST /auth/register`: crea `Organization` + `User` + `Membership`
+      (rol `admin`) atómicamente vía la función SQL `auth_register()`
+      (`backend/prisma/migrations/20260921141500_sprint2_auth_functions/`)
+      — "regístrate y te creamos tu workspace", como Slack/Notion/Linear.
+- [x] `GET /auth/orgs?email=...` usando `auth_list_orgs_for_email` (ya
+      existía desde Sprint 1, ahora tiene endpoint) para que el login
+      ofrezca un selector de organización en vez de pedir el slug a mano.
+- [x] Invitaciones: `POST /organizations/invitations` (solo `admin`,
+      verificado a mano en `InvitationsService` — ver nota sobre Sprint 4
+      más abajo), token de un solo uso con expiración
+      (`INVITATION_TTL_DAYS`, default 7 días). Sin SMTP real: el token se
+      loguea al server y se devuelve en la respuesta (documentado en el
+      propio código como el punto de extensión — mismo patrón que "aquí
+      conectaría Stripe" del Sprint 5).
+- [x] `POST /auth/invitations/:token/accept`: crea `Membership` para un
+      usuario existente o nuevo (pide password solo si el email no tiene
+      cuenta todavía), auto-login al aceptar.
+- [x] Refresh tokens: el access token (JWT) ahora expira en 15 minutos
+      (`JWT_EXPIRES_IN`); un refresh token opaco, rotado en cada uso y
+      revocable, sostiene la sesión (`REFRESH_TOKEN_TTL_DAYS`, default 30
+      días). `POST /auth/refresh` y `POST /auth/logout`. Ver
+      `docs/decisions/0005-refresh-token-rotation.md`.
+- [x] Angular: `/login` (con selector de organización), `/register`,
+      `/accept-invitation/:token`, `/dashboard` (guardado por
+      `authGuard`), interceptor HTTP que agrega el JWT y reintenta una vez
+      vía refresh ante un 401. Probado de punta a punta en un browser real
+      (registro → tarea → invitar → logout → login → aceptar invitación
+      como nuevo usuario en un contexto separado → acceso no autenticado
+      redirige a `/login`).
+- [x] Tests: 18 casos e2e sobre HTTP real (`backend/test/auth/`) — slug
+      duplicado rechazado, login con password incorrecta, listado de orgs,
+      invitación aceptada una sola vez (segunda vez → 410), no-admin no
+      puede invitar (403), rotación de refresh token invalida el anterior,
+      logout revoca, y una regresión a nivel API de que un token de la org
+      A nunca devuelve tareas de la org B.
+
+### Nota: `InvitationsService` NO usa un `RolesGuard` genérico todavía
+
+El chequeo "solo admin puede invitar" está hecho a mano dentro del service
+(`if (tenant.role !== 'admin') throw new ForbiddenException(...)`),
+comentado explícitamente en el código como una versión mínima de lo que
+Sprint 4 formaliza (`@Roles('admin')` + `RolesGuard` reutilizable). No se
+adelantó Sprint 4 completo — solo lo estrictamente necesario para que
+"invitar" tuviera la restricción de seguridad que el propio Sprint 2 pedía.
 
 ## Sprint 3 — Feature core del SaaS ⬜
 
-El dominio de ejemplo (`tasks`) ya existe a nivel de esquema + API mínima
-desde Sprint 1; este sprint es donde se vuelve un feature real de producto.
+El dominio de ejemplo (`tasks`) ya tiene esquema + API + una UI mínima
+(listado y creación en `/dashboard`, ver Sprint 2) desde antes de este
+sprint; acá se vuelve un feature real de producto, con su propia sección
+de la app en vez de vivir dentro del dashboard genérico.
 
 - [ ] Backend: `PATCH /tasks/:id`, `DELETE /tasks/:id`, paginación,
       filtros (`done`, texto), validación de que el `:id` pertenece al
       tenant actual (ya lo garantiza RLS, pero el endpoint debe devolver
       404 en vez de un error crudo de Postgres).
-- [ ] Angular: listado con `tasks.component`, formulario reactivo de
-      creación/edición, guard de autenticación en las rutas, interceptor
-      HTTP que agrega el JWT a cada request y maneja 401 (logout
-      automático).
+- [ ] Angular: mover `tasks` fuera de `DashboardComponent` a su propia
+      ruta/feature (`/tasks`) con listado paginado, edición inline o
+      formulario reactivo dedicado, marcar como completada.
+      `authGuard`/interceptor de Sprint 2 se reutilizan tal cual.
 - [ ] Tests e2e de Angular (Playwright o Cypress — decidir cuál al
-      empezar el sprint) para el flujo crear→ver→editar→completar tarea.
+      empezar el sprint; Sprint 2 se verificó con un script Playwright
+      ad-hoc fuera del repo, no con una suite versionada) para el flujo
+      crear→ver→editar→completar tarea.
 
 ## Sprint 4 — Roles y permisos ⬜
 
 - [ ] Guard de NestJS `RolesGuard` + decorator `@Roles('admin')` que lee
       `request.tenant.role` (ya viaja en el JWT desde Sprint 1) para
-      restringir endpoints (ej. solo `admin` puede invitar miembros o
-      cambiar el plan).
+      restringir endpoints (ej. invitar miembros o cambiar el plan).
+      Reemplazar el chequeo manual de `InvitationsService.create()`
+      (Sprint 2) por este decorator es el primer caso de uso real.
 - [ ] Angular: directiva estructural `*appHasRole="'admin'"` para ocultar
       UI que el usuario no puede usar (además del guard de backend — la
       UI nunca es la única barrera).

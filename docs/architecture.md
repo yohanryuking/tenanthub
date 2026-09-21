@@ -1,8 +1,10 @@
 # Arquitectura — TenantHub
 
-> Estado: Fase 1 (Sprint 0 + Sprint 1) implementada. Este documento describe
-> lo que existe hoy y cómo encaja con lo que falta — ver `roadmap.md` para
-> el detalle de los sprints pendientes.
+> Estado: Sprint 0, 1 y 2 implementados (modelo multi-tenant con RLS +
+> auth/onboarding completo: registro, login con selector de org,
+> invitaciones, refresh tokens rotados). Este documento describe lo que
+> existe hoy y cómo encaja con lo que falta — ver `roadmap.md` para el
+> detalle de los sprints pendientes.
 
 ## Resumen
 
@@ -113,12 +115,101 @@ pero **solo devuelven la fila que coincide exactamente con los parámetros
 recibidos** — nunca un listado general. Es la única fisura deliberada en
 el modelo, está en un solo archivo, y está documentada ahí mismo.
 
-## Modelo de datos (Fase 1)
+### Sprint 2 amplía la misma excepción, no la abre más
+
+Registro, invitaciones y refresh tokens tienen el mismo problema de fondo
+que login: todos necesitan escribir o leer algo *antes* de que exista un
+`app.current_org` para la request. En vez de inventar un mecanismo nuevo,
+Sprint 2 agrega más funciones al mismo patrón angosto
+(`backend/prisma/migrations/20260921141500_sprint2_auth_functions/` y
+`.../20260921143000_invitation_lookup_function/`):
+
+| Función | Para qué | Qué puede tocar |
+|---|---|---|
+| `auth_register(orgName, orgSlug, email, passwordHash)` | Crea org + user + membership admin atómicamente | Solo lo que la propia llamada crea |
+| `auth_invitation_lookup(tokenHash)` | Lee una invitación por su hash exacto | Una fila, la que matchea el hash |
+| `auth_accept_invitation(tokenHash, userId)` | Crea la membership al aceptar | Una invitación + una membership, ambas atadas al hash/userId recibidos |
+| `auth_issue_refresh_token(...)` / `auth_consume_refresh_token(...)` / `auth_revoke_refresh_token(...)` | Ciclo de vida del refresh token | Una fila de `refresh_tokens`, identificada por su hash |
+
+Cada una sigue la misma regla: `SECURITY DEFINER`, `REVOKE ALL FROM
+PUBLIC` + `GRANT EXECUTE TO tenanthub_app`, y el alcance de lo que puede
+leer/escribir está atado a los parámetros exactos que recibe — nunca a un
+listado abierto. Ver ADR 0005 para el diseño de refresh tokens en
+particular.
+
+**Bug real encontrado y corregido en este sprint** (vale la pena dejarlo
+documentado): `auth_accept_invitation` originalmente fallaba con
+`column reference "org_id" is ambiguous` porque sus parámetros de salida
+(`RETURNS TABLE(org_id uuid, role ...)`) colisionaban con las columnas
+`org_id`/`role` referenciadas en `ON CONFLICT (org_id, user_id)`. Se
+descubrió recién al probar el flujo completo de aceptar-invitación por
+HTTP, no en la prueba manual por SQL de `auth_register` (que no tiene
+`ON CONFLICT` y por eso no lo disparaba). La lección — y por qué
+`docs/roadmap.md` insiste en probar cada flujo de punta a punta, no solo
+sus piezas por separado — quedó en el comentario de la migración de fix
+(`20260921144500_fix_accept_invitation_ambiguity`).
+
+## Sesiones: access token corto + refresh token rotado
+
+Desde Sprint 2, el JWT de acceso expira en 15 minutos
+(`JWT_EXPIRES_IN`). Lo que sostiene la sesión es un **refresh token
+opaco** (no un JWT — una cadena aleatoria sin payload), cuyo hash SHA-256
+se guarda en `refresh_tokens` y se **rota en cada uso**: `POST
+/auth/refresh` invalida el token presentado y devuelve uno nuevo; usar el
+viejo de nuevo devuelve 401. `POST /auth/logout` lo revoca explícitamente.
+Ver ADR 0005 para el razonamiento completo.
+
+## Onboarding: registro e invitaciones
+
+- `POST /auth/register`: alguien nuevo crea su organización y queda como
+  `admin` — no hay paso previo de "crear cuenta" y luego "crear
+  organización", es un solo paso atómico (`auth_register()`).
+- `GET /auth/orgs?email=...`: dado un email, devuelve las organizaciones a
+  las que pertenece (`auth_list_orgs_for_email`, ya existía desde Sprint 1
+  sin endpoint) — así el login puede ofrecer un selector en vez de pedir
+  el slug de memoria.
+- `POST /organizations/invitations` (solo `admin` — chequeo manual en
+  `InvitationsService`, ver nota sobre Sprint 4 en `roadmap.md`): genera
+  un token de invitación, lo loguea al server (no hay SMTP configurado;
+  ver el comentario en el código como punto de extensión documentado) y lo
+  devuelve en la respuesta para poder probarlo/demostrarlo sin un
+  proveedor de email real.
+- `POST /auth/invitations/:token/accept`: crea la membership; si el email
+  invitado no tiene cuenta todavía, pide password y la crea en el mismo
+  paso. Responde con un par de tokens — quedás logueado al aceptar.
+
+## Frontend (Angular)
+
+`frontend/src/app/core/auth/`:
+
+- `auth.service.ts`: login, register, listOrgs, acceptInvitation, refresh,
+  logout. Guarda los tokens en `localStorage` (ver limitación conocida en
+  `docs/threat-model.md`) y expone `isAuthenticated`/`claims` como
+  signals, decodificando el JWT client-side solo para mostrar
+  org/rol en la UI — **nunca** como fuente de verdad de autorización, eso
+  siempre lo decide el backend.
+- `auth.guard.ts`: `CanActivateFn` que redirige a `/login` si no hay
+  access token.
+- `auth.interceptor.ts`: agrega `Authorization: Bearer` a cada request al
+  backend; ante un 401 (fuera de los propios endpoints de `/auth/`),
+  intenta un refresh una sola vez y reintenta la request original —
+  varias requests fallando a la vez comparten el mismo refresh en vuelo
+  en vez de disparar N refreshes.
+
+Rutas: `/login`, `/register`, `/accept-invitation/:token` (públicas),
+`/dashboard` (protegida por `authGuard`). El dashboard de Sprint 2 es
+deliberadamente genérico — lista/crea tareas e incluye el formulario de
+invitación si sos admin — porque separar `tasks` en su propia feature con
+routing dedicado es contenido de Sprint 3, no de este.
+
+## Modelo de datos
 
 ```
 organizations (id, name, slug, plan, ...)
 users (id, email, password_hash, ...)          -- global, no tenant-scoped
 memberships (org_id, user_id, role)             -- une user ↔ organization
+invitations (org_id, email, role, token_hash, expires_at, accepted_at)  -- Sprint 2
+refresh_tokens (user_id, org_id, token_hash, expires_at, revoked_at)     -- Sprint 2
 tasks (id, org_id, title, ..., created_by)      -- dominio de ejemplo (Sprint 3 lo expande)
 audit_log (id, org_id, actor_id, action, ...)    -- tabla y RLS listas; Sprint 5 escribe en ella
 ```
@@ -143,18 +234,30 @@ tenanthub/
 │   │   ├── schema.prisma
 │   │   ├── seed.ts
 │   │   └── migrations/
-│   │       ├── 20260914211754_init/            -- tablas
-│   │       ├── 20260914212000_rls_policies/    -- RLS + rol tenanthub_app
-│   │       └── 20260914213000_auth_lookup_function/
+│   │       ├── 20260914211754_init/                          -- tablas Sprint 1
+│   │       ├── 20260914212000_rls_policies/                  -- RLS + rol tenanthub_app
+│   │       ├── 20260914213000_auth_lookup_function/          -- login (Sprint 1)
+│   │       ├── 20260921140703_invitations_and_refresh_tokens/ -- tablas Sprint 2
+│   │       ├── 20260921141500_sprint2_auth_functions/         -- register, accept-invite, refresh
+│   │       ├── 20260921143000_invitation_lookup_function/
+│   │       └── 20260921144500_fix_accept_invitation_ambiguity/
 │   ├── src/
 │   │   ├── common/
 │   │   │   ├── prisma/          -- PrismaService (conecta como tenanthub_app)
 │   │   │   └── tenant/          -- Guard, Interceptor, AsyncLocalStorage, decorators
-│   │   ├── auth/                -- login (bcrypt + JWT scoped a un org)
+│   │   ├── auth/                -- register, login, orgs, refresh, logout, accept-invitation
+│   │   ├── organizations/       -- invitaciones (crear, listar)
 │   │   ├── tasks/                -- CRUD de ejemplo, cero filtros manuales por org
 │   │   └── health/
-│   └── test/rls/                 -- tests negativos de RLS contra Postgres real
-├── frontend/                # Angular (shell mínimo — Sprint 3 construye el feature real)
+│   └── test/
+│       ├── rls/                  -- tests negativos de RLS contra Postgres real
+│       └── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
+├── frontend/                # Angular: login, registro, aceptar invitación, dashboard
+│   └── src/app/
+│       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh)
+│       ├── core/tasks/            -- TasksService
+│       ├── core/organizations/    -- InvitationsService
+│       └── features/              -- login, register, accept-invitation, dashboard
 ├── docs/
 │   ├── architecture.md      -- este archivo
 │   ├── roadmap.md
@@ -173,7 +276,7 @@ docker compose up -d postgres
 cd backend
 cp .env.example .env
 npm install
-npx prisma migrate deploy   # crea tablas, políticas RLS y el rol tenanthub_app
+npx prisma migrate deploy   # crea tablas, políticas RLS, funciones auth_* y el rol tenanthub_app
 npx prisma db seed           # 2 orgs, 2 usuarios, 1 task cada una
 npm run start:dev
 
@@ -187,6 +290,8 @@ curl localhost:3000/tasks -H "Authorization: Bearer <token>"
 cd ../frontend
 npm install
 npm start
+# abrir http://localhost:4200/register y crear una organización nueva,
+# o http://localhost:4200/login con alice@acme.test / password123 / acme
 ```
 
 ## Testing
@@ -203,21 +308,39 @@ npm start
   Cada uno de estos debe **fallar** para que el test pase — es la prueba de
   que el modelo de amenazas de multi-tenancy está cubierto, no solo el
   camino feliz.
-- CI (`.github/workflows/backend-ci.yml`) levanta un Postgres real como
-  servicio, aplica las migraciones (que crean el rol `tenanthub_app` desde
-  cero) y corre ambas suites.
+- `test/auth/auth.e2e-spec.ts` (backend, misma suite `test:e2e`): 18 tests
+  sobre HTTP real contra la app NestJS completa — registro, slug
+  duplicado, login con password incorrecta, listado de orgs, invitar +
+  aceptar + re-aceptar (410), no-admin no puede invitar (403), rotación
+  de refresh token, logout, y una regresión de aislamiento a nivel API
+  (org A nunca ve tareas de org B a través del endpoint, no solo por SQL
+  directo). Limpia sus propios datos de prueba en `afterAll`.
+- Frontend: `npm test` (Angular/Karma) para unit tests; el flujo completo
+  (registro → tarea → invitar → logout → login → aceptar invitación →
+  redirect no autenticado) se verificó con un script Playwright ad-hoc
+  contra un browser real durante Sprint 2 — no forma parte del repo
+  todavía (ver nota de Sprint 3 en `roadmap.md` sobre agregar una suite
+  e2e versionada).
+- CI: `.github/workflows/backend-ci.yml` levanta un Postgres real como
+  servicio, aplica las migraciones (que crean el rol `tenanthub_app` y
+  todas las funciones `auth_*` desde cero) y corre ambas suites de
+  backend; `.github/workflows/frontend-ci.yml` construye el frontend y
+  corre sus unit tests en Chrome headless.
 
 ## Qué NO está implementado todavía
 
 Ver `docs/roadmap.md` para el detalle sprint por sprint. En resumen, fuera
 de alcance de esta fase:
 
-- Registro de usuarios / creación automática de organización, invitaciones
-  por email (Sprint 2).
-- Feature completo de Angular (routing protegido, reactive forms más allá
-  del shell) (Sprint 3).
-- Autorización fina admin/member en UI y backend más allá del campo `role`
-  que ya viaja en el JWT (Sprint 4).
+- `tasks` como feature dedicado (paginación, edición, borrado, ruta propia
+  en vez de vivir dentro del dashboard genérico) (Sprint 3).
+- `RolesGuard`/`@Roles()` reutilizable — hoy `InvitationsService` chequea
+  el rol a mano — y autorización fina admin/member más allá de eso
+  (Sprint 4).
+- Envío real de invitaciones por email (hoy el token se loguea y se
+  devuelve en la respuesta HTTP, sin proveedor SMTP).
+- Detección de reuso de un refresh token ya consumido como señal de robo
+  (hoy simplemente falla con 401 — ver ADR 0005).
 - Feature flags por plan, botón de cambio de plan, escritura real en
   `audit_log` (Sprint 5).
 - Deploy productivo (Sprint 6).

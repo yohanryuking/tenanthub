@@ -13,7 +13,7 @@ import { TenantInterceptor } from './tenant.interceptor';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow<string>('JWT_SECRET'),
-        signOptions: { expiresIn: config.get('JWT_EXPIRES_IN', '8h') },
+        signOptions: { expiresIn: config.get('JWT_EXPIRES_IN', '15m') },
       }),
     }),
   ],
