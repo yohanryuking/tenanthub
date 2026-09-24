@@ -102,25 +102,42 @@ Sprint 4 formaliza (`@Roles('admin')` + `RolesGuard` reutilizable). No se
 adelantó Sprint 4 completo — solo lo estrictamente necesario para que
 "invitar" tuviera la restricción de seguridad que el propio Sprint 2 pedía.
 
-## Sprint 3 — Feature core del SaaS ⬜
+## Sprint 3 — Feature core del SaaS ✅
 
-El dominio de ejemplo (`tasks`) ya tiene esquema + API + una UI mínima
+El dominio de ejemplo (`tasks`) ya tenía esquema + API + una UI mínima
 (listado y creación en `/dashboard`, ver Sprint 2) desde antes de este
-sprint; acá se vuelve un feature real de producto, con su propia sección
+sprint; acá se volvió un feature real de producto, con su propia sección
 de la app en vez de vivir dentro del dashboard genérico.
 
-- [ ] Backend: `PATCH /tasks/:id`, `DELETE /tasks/:id`, paginación,
-      filtros (`done`, texto), validación de que el `:id` pertenece al
-      tenant actual (ya lo garantiza RLS, pero el endpoint debe devolver
-      404 en vez de un error crudo de Postgres).
-- [ ] Angular: mover `tasks` fuera de `DashboardComponent` a su propia
-      ruta/feature (`/tasks`) con listado paginado, edición inline o
-      formulario reactivo dedicado, marcar como completada.
-      `authGuard`/interceptor de Sprint 2 se reutilizan tal cual.
-- [ ] Tests e2e de Angular (Playwright o Cypress — decidir cuál al
-      empezar el sprint; Sprint 2 se verificó con un script Playwright
-      ad-hoc fuera del repo, no con una suite versionada) para el flujo
-      crear→ver→editar→completar tarea.
+- [x] Backend: `PATCH /tasks/:id`, `DELETE /tasks/:id`
+      (`backend/src/tasks/`), paginación (`page`/`pageSize`) y filtros
+      (`done`, `q` por título) en `GET /tasks`. Un id que pertenece a otra
+      organización devuelve **404, nunca 403** — RLS hace invisible la
+      fila en vez de rechazar el acceso, así que la API no puede
+      contradecir eso confirmando "existe pero no es tuya". Implementado
+      dejando que el `P2025` de Prisma (update/delete singular que no
+      matchea ninguna fila) se traduzca a `NotFoundException`, sin ningún
+      chequeo manual de `orgId`.
+- [x] Angular: `tasks` se movió del dashboard a su propia ruta `/tasks`
+      (`frontend/src/app/features/tasks/`) con listado paginado (5 por
+      página), filtro por texto y por estado (debounced), edición inline
+      del título (click → input → blur/Enter guarda), marcar como
+      completada, eliminar. `authGuard`/`authInterceptor` de Sprint 2 se
+      reutilizaron sin cambios. El dashboard quedó con la info de la
+      organización, el formulario de invitación, y un link a `/tasks`.
+- [x] Tests e2e de Angular: se eligió **Playwright**
+      (`frontend/e2e/tasks.spec.ts`, `frontend/playwright.config.ts`) —
+      versionado en el repo esta vez, a diferencia del script ad-hoc de
+      Sprint 2. Cubre exactamente el flujo pedido
+      (crear→ver→editar→completar→eliminar) más filtros y paginación.
+      Corre en CI (`.github/workflows/e2e-ci.yml`) contra un backend y
+      Postgres reales, no mockeados.
+- [x] Tests de backend: 6 casos nuevos e2e sobre HTTP real
+      (`backend/test/tasks/tasks.e2e-spec.ts`) — paginación, filtros,
+      update/delete propios, 404 en un id ya borrado, y los dos casos de
+      seguridad más importantes: un id de otra organización da 404 tanto
+      en PATCH como en DELETE, verificado además comprobando con el rol
+      owner que la fila de la otra organización quedó intacta.
 
 ## Sprint 4 — Roles y permisos ⬜
 

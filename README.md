@@ -6,7 +6,7 @@ que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
 **PostgreSQL + Prisma** (sin Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-## Estado actual: Sprint 0, 1 y 2
+## Estado actual: Sprint 0, 1, 2 y 3
 
 Implementado y probado:
 
@@ -21,14 +21,16 @@ Implementado y probado:
 - Onboarding completo: registro (crea org + admin en un paso), login con
   selector de organización, invitar miembros, aceptar invitación, sesión
   sostenida con refresh tokens rotados (access token de 15 min).
-- 18 tests e2e sobre HTTP real de los flujos de auth/onboarding, más los
-  7 de RLS — 25 tests de backend en total, todos verificando que un
-  ataque falla, no solo que el camino feliz funciona.
-- Angular con login, registro, aceptar invitación y un dashboard
-  funcional (tareas + invitar), probado de punta a punta en un browser
-  real.
-- CI (backend y frontend) que levanta Postgres, aplica migraciones y
-  corre toda la suite en cada push/PR.
+- `tasks` como feature real: paginación, filtros por texto/estado,
+  edición inline, marcar completada, borrar — con su propia ruta
+  `/tasks` en Angular. Un id de otra organización siempre da 404, nunca
+  403, para no filtrar que la fila existe.
+- 24 tests e2e de backend sobre HTTP real (auth/onboarding + tasks) más
+  los 7 de RLS directos — 31 tests en total, todos verificando que un
+  ataque falla, no solo que el camino feliz funciona. Más una suite
+  Playwright versionada (`frontend/e2e/`) contra un browser real.
+- CI (backend, frontend y un job e2e full-stack) que levanta Postgres,
+  aplica migraciones y corre toda la suite en cada push/PR.
 
 Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
 **[docs/roadmap.md](docs/roadmap.md)**.
@@ -78,6 +80,10 @@ crear una organización nueva, o `http://localhost:4200/login` con
 
 ```bash
 cd backend
-npm test        # unit tests
-npm run test:e2e # tests negativos de RLS contra Postgres real
+npm test         # unit tests
+npm run test:e2e # RLS negativos + flujos de auth/onboarding + tasks, sobre HTTP real
+
+cd ../frontend
+npm test         # unit tests (Karma)
+npm run e2e      # Playwright — requiere el backend corriendo (ver frontend/README.md)
 ```

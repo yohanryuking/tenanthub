@@ -11,23 +11,8 @@
 
   <section class="card">
     <h2>Tareas</h2>
-
-    <form [formGroup]="taskForm" (ngSubmit)="addTask()" class="inline-form">
-      <input type="text" formControlName="title" placeholder="Nueva tarea" />
-      <button type="submit">Agregar</button>
-    </form>
-
-    @if (loading()) {
-      <p>Cargando…</p>
-    } @else if (tasks().length === 0) {
-      <p class="empty">Sin tareas todavía.</p>
-    } @else {
-      <ul>
-        @for (task of tasks(); track task.id) {
-          <li>{{ task.title }}</li>
-        }
-      </ul>
-    }
+    <p>Gestioná las tareas de tu organización, con filtros y paginación.</p>
+    <a class="link-button" routerLink="/tasks">Ver tareas →</a>
   </section>
 
   @if (auth.claims()?.role === 'admin') {

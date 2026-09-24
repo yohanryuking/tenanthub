@@ -204,7 +204,8 @@ describe('Auth flows (e2e)', () => {
         .set('Authorization', `Bearer ${regA.body.accessToken}`);
 
       expect(listA.status).toBe(200);
-      expect(listA.body).toEqual([]);
+      expect(listA.body.items).toEqual([]);
+      expect(listA.body.total).toBe(0);
     });
   });
 });

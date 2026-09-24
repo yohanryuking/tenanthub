@@ -1,0 +1,67 @@
+<div class="tasks-page">
+  <header>
+    <h1>Tareas</h1>
+    <a routerLink="/dashboard">← Volver</a>
+  </header>
+
+  <form class="add-form" [formGroup]="createForm" (ngSubmit)="addTask()">
+    <input type="text" formControlName="title" placeholder="Nueva tarea" />
+    <button type="submit">Agregar</button>
+  </form>
+
+  <form class="filter-form" [formGroup]="filterForm">
+    <input type="text" formControlName="q" placeholder="Buscar por título…" />
+    <select formControlName="done">
+      <option value="">Todas</option>
+      <option value="false">Pendientes</option>
+      <option value="true">Completadas</option>
+    </select>
+  </form>
+
+  @if (loading()) {
+    <p>Cargando…</p>
+  }
+  @if (!loading() && result(); as r) {
+    @if (r.items.length === 0) {
+      <p class="empty">No hay tareas que coincidan.</p>
+    } @else {
+      <ul class="task-list">
+        @for (task of r.items; track task.id) {
+          <li [class.done]="task.done">
+            <input
+              type="checkbox"
+              [checked]="task.done"
+              (change)="toggleDone(task)"
+              [attr.aria-label]="'Marcar ' + task.title + ' como completada'"
+            />
+
+            @if (editingId() === task.id) {
+              <input
+                #titleInput
+                type="text"
+                class="edit-input"
+                [value]="task.title"
+                (blur)="saveTitle(task, titleInput.value)"
+                (keyup.enter)="titleInput.blur()"
+              />
+            } @else {
+              <span class="title" (click)="startEdit(task)">{{ task.title }}</span>
+            }
+
+            <button class="delete" (click)="remove(task)" aria-label="Eliminar">✕</button>
+          </li>
+        }
+      </ul>
+
+      <div class="pagination">
+        <button type="button" [disabled]="r.page <= 1" (click)="goToPage(r.page - 1)">
+          Anterior
+        </button>
+        <span>Página {{ r.page }} de {{ totalPages }} ({{ r.total }} tareas)</span>
+        <button type="button" [disabled]="r.page >= totalPages" (click)="goToPage(r.page + 1)">
+          Siguiente
+        </button>
+      </div>
+    }
+  }
+</div>

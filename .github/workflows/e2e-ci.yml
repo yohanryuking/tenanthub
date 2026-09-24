@@ -1,0 +1,77 @@
+name: e2e-ci
+
+# Full-stack Playwright suite: registers a real org through the UI and
+# drives the tasks CRUD flow against a real backend + Postgres. Separate
+# from backend-ci/frontend-ci because it needs both running at once.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/e2e-ci.yml'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: tenanthub_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tenanthub_dev
+      APP_DATABASE_URL: postgresql://tenanthub_app:tenanthub_app@localhost:5432/tenanthub_dev
+      JWT_SECRET: e2e-test-secret
+      JWT_EXPIRES_IN: 15m
+      REFRESH_TOKEN_TTL_DAYS: 30
+      PORT: 3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Apply migrations
+        working-directory: backend
+        run: npx prisma migrate deploy
+
+      - name: Build and start backend
+        working-directory: backend
+        run: |
+          npm run build
+          node dist/src/main.js &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break
+            sleep 1
+          done
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright's Chromium
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        working-directory: frontend
+        run: npm run e2e

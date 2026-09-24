@@ -1,0 +1,122 @@
+.tasks-page {
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1.5rem;
+}
+
+header a {
+  color: #52606d;
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.add-form,
+.filter-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.add-form input,
+.filter-form input,
+.filter-form select {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+}
+
+.add-form button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  background: #1f2933;
+  color: white;
+  cursor: pointer;
+}
+
+.task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.task-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #f0f2f4;
+}
+
+.task-list li:last-child {
+  border-bottom: none;
+}
+
+.task-list li.done .title {
+  text-decoration: line-through;
+  color: #9aa5b1;
+}
+
+.title {
+  flex: 1;
+  cursor: text;
+}
+
+.edit-input {
+  flex: 1;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid #1f2933;
+  border-radius: 4px;
+}
+
+.delete {
+  border: none;
+  background: none;
+  color: #9aa5b1;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.delete:hover {
+  color: #c0392b;
+}
+
+.empty {
+  color: #9aa5b1;
+  font-size: 0.875rem;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  font-size: 0.875rem;
+  color: #52606d;
+}
+
+.pagination button {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

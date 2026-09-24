@@ -1,10 +1,11 @@
 # Arquitectura — TenantHub
 
-> Estado: Sprint 0, 1 y 2 implementados (modelo multi-tenant con RLS +
-> auth/onboarding completo: registro, login con selector de org,
-> invitaciones, refresh tokens rotados). Este documento describe lo que
-> existe hoy y cómo encaja con lo que falta — ver `roadmap.md` para el
-> detalle de los sprints pendientes.
+> Estado: Sprint 0, 1, 2 y 3 implementados (modelo multi-tenant con RLS +
+> auth/onboarding completo + `tasks` como feature real: paginación,
+> filtros, edición, borrado, propia ruta en Angular, suite Playwright
+> versionada). Este documento describe lo que existe hoy y cómo encaja
+> con lo que falta — ver `roadmap.md` para el detalle de los sprints
+> pendientes.
 
 ## Resumen
 
@@ -79,7 +80,13 @@ cualquier proveedor administrado — RDS, Cloud SQL, Neon, etc.) con:
    `tenantContext.getClient()` corre dentro de esa transacción. Las
    políticas RLS de Postgres —no el código de NestJS— son las que deciden
    qué filas son visibles o modificables. `TasksService` es el ejemplo
-   vivo: no tiene ningún `where: { orgId }` en ninguna query.
+   vivo: no tiene ningún `where: { orgId }` en ninguna query, ni siquiera
+   en `update`/`delete` por id (Sprint 3). Ahí RLS hace que un id de otra
+   organización simplemente no matchee ninguna fila; Prisma lo reporta
+   como `P2025` (registro no encontrado), que el service traduce a `404`.
+   Es indistinguible, a propósito, de un id que nunca existió — devolver
+   `403` en cambio confirmaría que la fila existe, solo que no es tuya,
+   filtrando información que RLS ya se encargó de ocultar.
 
 5. Si el interceptor/guard nunca corrieran (p. ej. un desarrollador nuevo
    olvida aplicarlos a un endpoint nuevo), `getClient()` lanza un error en
@@ -197,10 +204,11 @@ Ver ADR 0005 para el razonamiento completo.
   en vez de disparar N refreshes.
 
 Rutas: `/login`, `/register`, `/accept-invitation/:token` (públicas),
-`/dashboard` (protegida por `authGuard`). El dashboard de Sprint 2 es
-deliberadamente genérico — lista/crea tareas e incluye el formulario de
-invitación si sos admin — porque separar `tasks` en su propia feature con
-routing dedicado es contenido de Sprint 3, no de este.
+`/dashboard` y `/tasks` (protegidas por `authGuard`). El dashboard quedó
+con la info de la organización y el formulario de invitación; `tasks`
+(Sprint 3, `frontend/src/app/features/tasks/`) es su propia feature con
+listado paginado, filtros por texto/estado (debounced) y edición inline —
+reutiliza el mismo `authGuard`/`authInterceptor` de Sprint 2 sin tocarlos.
 
 ## Modelo de datos
 
@@ -247,17 +255,20 @@ tenanthub/
 │   │   │   └── tenant/          -- Guard, Interceptor, AsyncLocalStorage, decorators
 │   │   ├── auth/                -- register, login, orgs, refresh, logout, accept-invitation
 │   │   ├── organizations/       -- invitaciones (crear, listar)
-│   │   ├── tasks/                -- CRUD de ejemplo, cero filtros manuales por org
+│   │   ├── tasks/                -- CRUD + paginación/filtros, cero filtros manuales por org
 │   │   └── health/
 │   └── test/
 │       ├── rls/                  -- tests negativos de RLS contra Postgres real
-│       └── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
-├── frontend/                # Angular: login, registro, aceptar invitación, dashboard
+│       ├── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
+│       └── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
+├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks
+│   ├── e2e/                  -- suite Playwright (crear→ver→editar→completar→eliminar, filtros, paginación)
+│   ├── playwright.config.ts
 │   └── src/app/
 │       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh)
 │       ├── core/tasks/            -- TasksService
 │       ├── core/organizations/    -- InvitationsService
-│       └── features/              -- login, register, accept-invitation, dashboard
+│       └── features/              -- login, register, accept-invitation, dashboard, tasks
 ├── docs/
 │   ├── architecture.md      -- este archivo
 │   ├── roadmap.md
@@ -315,25 +326,29 @@ npm start
   de refresh token, logout, y una regresión de aislamiento a nivel API
   (org A nunca ve tareas de org B a través del endpoint, no solo por SQL
   directo). Limpia sus propios datos de prueba en `afterAll`.
-- Frontend: `npm test` (Angular/Karma) para unit tests; el flujo completo
-  (registro → tarea → invitar → logout → login → aceptar invitación →
-  redirect no autenticado) se verificó con un script Playwright ad-hoc
-  contra un browser real durante Sprint 2 — no forma parte del repo
-  todavía (ver nota de Sprint 3 en `roadmap.md` sobre agregar una suite
-  e2e versionada).
-- CI: `.github/workflows/backend-ci.yml` levanta un Postgres real como
-  servicio, aplica las migraciones (que crean el rol `tenanthub_app` y
-  todas las funciones `auth_*` desde cero) y corre ambas suites de
-  backend; `.github/workflows/frontend-ci.yml` construye el frontend y
-  corre sus unit tests en Chrome headless.
+- `test/tasks/tasks.e2e-spec.ts` (backend, Sprint 3): paginación, filtros
+  por `done`/`q`, update/delete de una tarea propia, 404 sobre un id ya
+  borrado, y los dos casos que más importan — org B intentando
+  `PATCH`/`DELETE` un id de org A siempre da 404 (nunca 403), verificado
+  además confirmando con el rol owner que la fila de la otra organización
+  quedó intacta.
+- Frontend: `npm test` (Angular/Karma) para unit tests;
+  `frontend/e2e/tasks.spec.ts` (Playwright, Sprint 3) cubre
+  crear→ver→editar→completar→eliminar, filtros por texto/estado, y
+  paginación, contra un browser real. Requiere el backend corriendo por
+  separado (`frontend/playwright.config.ts` solo levanta el dev server de
+  Angular) — ver `frontend/README.md`.
+- CI: `.github/workflows/backend-ci.yml` (unit + RLS + tasks del backend),
+  `.github/workflows/frontend-ci.yml` (build + unit tests de Angular en
+  Chrome headless), y `.github/workflows/e2e-ci.yml` (Sprint 3: levanta
+  Postgres + backend + Angular dev server y corre la suite Playwright
+  completa contra el stack real).
 
 ## Qué NO está implementado todavía
 
 Ver `docs/roadmap.md` para el detalle sprint por sprint. En resumen, fuera
 de alcance de esta fase:
 
-- `tasks` como feature dedicado (paginación, edición, borrado, ruta propia
-  en vez de vivir dentro del dashboard genérico) (Sprint 3).
 - `RolesGuard`/`@Roles()` reutilizable — hoy `InvitationsService` chequea
   el rol a mano — y autorización fina admin/member más allá de eso
   (Sprint 4).
