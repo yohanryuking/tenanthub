@@ -6,7 +6,11 @@ que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
 **PostgreSQL + Prisma** (sin Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-## Estado actual: Sprint 0 a 5
+🎥 [Video demo](demo/tenanthub-demo.webm) (~43s, generado con Playwright
+contra la app real): dos organizaciones aisladas, gating por plan, y
+audit log en acción.
+
+## Estado actual: Sprint 0 a 5, Sprint 6 preparado
 
 Implementado y probado:
 
@@ -39,7 +43,15 @@ Implementado y probado:
   el camino feliz funciona. Más una suite Playwright versionada
   (`frontend/e2e/`) contra un browser real.
 - CI (backend, frontend y un job e2e full-stack) que levanta Postgres,
-  aplica migraciones y corre toda la suite en cada push/PR.
+  aplica migraciones y corre toda la suite en cada push/PR — con un job
+  `deploy` gateado por esos mismos tests (Sprint 6, ver más abajo).
+
+Preparado pero **no ejecutado** (este entorno de desarrollo no tiene
+credenciales de ningún proveedor de hosting): `Dockerfile` del backend,
+blueprint de Render (`render.yaml`) + config de Vercel
+(`frontend/vercel.json`), y los jobs de CI que dispararían el deploy real
+una vez configurados los secrets. Guía completa, paso a paso, en
+**[docs/deploy.md](docs/deploy.md)**.
 
 Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
 **[docs/roadmap.md](docs/roadmap.md)**.
@@ -51,7 +63,9 @@ Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
 | [docs/architecture.md](docs/architecture.md) | Cómo funciona el aislamiento de principio a fin, estructura del repo, cómo correr todo |
 | [docs/roadmap.md](docs/roadmap.md) | Qué está hecho y qué falta, sprint por sprint |
 | [docs/threat-model.md](docs/threat-model.md) | Qué ataques se probaron, qué mitiga cada cosa, riesgo residual documentado |
+| [docs/deploy.md](docs/deploy.md) | Deploy real: Render (backend + Postgres) + Vercel (frontend), paso a paso |
 | [docs/decisions/](docs/decisions/) | ADRs: por qué Postgres normal en vez de Supabase, por qué Prisma, diseño de roles de RLS, auth propia, refresh tokens, plan/audit log |
+| [demo/](demo/) | Video demo + qué muestra cada paso |
 
 ## Quickstart
 

@@ -35,7 +35,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tenanthub_dev
       APP_DATABASE_URL: postgresql://tenanthub_app:tenanthub_app@localhost:5432/tenanthub_dev
       JWT_SECRET: ci-test-secret
-      JWT_EXPIRES_IN: 8h
+      JWT_EXPIRES_IN: 15m
 
     steps:
       - uses: actions/checkout@v4
@@ -59,3 +59,23 @@ jobs:
 
       - name: Negative RLS tests (real Postgres)
         run: npm run test:e2e
+
+  deploy:
+    # Only runs after `test` passes, and only for pushes to main — this is
+    # what "gated by the existing tests" means here. See docs/deploy.md:
+    # until RENDER_DEPLOY_HOOK is set as a repo secret this step is a
+    # deliberate no-op, not a failure, so CI stays green before hosting is
+    # actually set up.
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK secret not set — skipping deploy. See docs/deploy.md."
+            exit 0
+          fi
+          curl -fsS -X POST "$DEPLOY_HOOK"

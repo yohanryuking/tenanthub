@@ -254,21 +254,63 @@ propias organizaciones (por prefijo único de slug), ninguna borra usuarios
 por dominio de email. Ver el comentario en el `afterAll` de
 `test/auth/auth.e2e-spec.ts`.
 
-## Sprint 6 — Deploy y presentación ⬜
+## Sprint 6 — Deploy y presentación 🚧
 
-- [ ] Deploy del backend (Fly.io/Railway/Render — cualquiera con Postgres
-      administrado; documentar cuál y por qué al elegir).
-- [ ] Deploy del frontend (Vercel/Netlify/Cloudflare Pages).
-- [ ] Pipeline de deploy en CI (extender `.github/workflows/`) gateado
-      por los tests existentes.
-- [ ] README con arquitectura y decisiones (este repo ya tiene
-      `docs/architecture.md` y `docs/decisions/` — en este sprint se
-      resume/enlaza desde el README principal para quien llega de un
-      link de portafolio).
-- [ ] Video demo: dos organizaciones en paralelo mostrando aislamiento de
-      datos en vivo, un intento fallido de usar una feature de plan pro
-      estando en plan free, y una entrada nueva apareciendo en el audit
-      log en tiempo real.
+Este sprint tiene una diferencia real con los anteriores: los primeros
+cinco se podían completar enteramente dentro de este entorno de
+desarrollo (Postgres local, backend y frontend corriendo acá mismo). Este
+no — un deploy real necesita cuentas y credenciales de un proveedor de
+hosting que este entorno no tiene. Lo que sigue está preparado y
+verificado hasta donde se puede sin esas credenciales; lo que falta está
+marcado explícitamente.
+
+- [x] **Elegido y documentado**: backend en Render (blueprint +
+      Postgres administrado), frontend en Vercel (build de Angular +
+      rewrite de SPA). Ver `docs/deploy.md` para el porqué de cada uno
+      frente a las alternativas del roadmap original (Fly.io/Railway,
+      Netlify/Cloudflare Pages).
+- [x] **Preparado, no ejecutado** (sin credenciales no hay forma de
+      probarlo end-to-end):
+  - `backend/Dockerfile` — build multi-stage-en-una-sola-imagen (el
+    contenedor necesita el Prisma CLI en el arranque de todos modos, ver
+    el comentario en el archivo), corre `prisma migrate deploy` antes de
+    levantar la app.
+  - `render.yaml` (blueprint: web service + Postgres) y
+    `frontend/vercel.json` (build + rewrite de SPA).
+  - `CORS_ORIGIN` configurable por env var en `main.ts` (antes era
+    siempre "cualquier origen"); el server ahora bindea a `0.0.0.0`,
+    requisito de cualquier host containerizado.
+  - **Bug real encontrado al preparar esto**: `npm run start:prod`
+    (`node dist/main.js`) nunca había funcionado — `tsconfig.build.json`
+    no restringía la compilación a `src/`, así que `nest build` emitía
+    `dist/src/main.js` en vez de `dist/main.js` (por eso cada sprint
+    anterior arrancó el server a mano con `node dist/src/main.js`, sin
+    que nadie notara la discrepancia con el script de `package.json`).
+    Se corrigió agregando `"include": ["src"]` a `tsconfig.build.json`;
+    verificado corriendo `npm run start:prod` de punta a punta.
+- [x] Jobs `deploy` en `backend-ci.yml`/`frontend-ci.yml`: corren solo si
+      el job de tests pasó y solo en push a `main`, y llaman a un deploy
+      hook de Render/Vercel — pero hacen un no-op explícito (no fallan)
+      si el secret todavía no está configurado. Es la forma correcta de
+      dejarlo listo sin poder probarlo con webhooks reales.
+- [x] README principal enlaza `docs/architecture.md`, `docs/roadmap.md`,
+      `docs/threat-model.md`, `docs/decisions/` y ahora `docs/deploy.md`
+      y el video demo.
+- [x] Video demo (`demo/tenanthub-demo.webm`, generado con
+      `frontend/scripts/record-demo.js`): registro de una organización en
+      plan free, intento fallido de exportar CSV (403), upgrade a pro,
+      export funcionando, la auditoría registrando el cambio de plan y
+      una invitación, y una segunda organización completamente aislada
+      (tareas y auditoría vacías, aunque ambas corren sobre la misma base
+      al mismo tiempo). Nota de honestidad: "en tiempo real" en el
+      roadmap original se interpretó como "aparece de inmediato al volver
+      a consultar", no como push por websocket — este proyecto no tiene
+      esa infraestructura y no la necesitaba para lo que pedía el sprint.
+- [ ] **Deploy real ejecutado** (Render + Vercel corriendo con URLs
+      públicas, `APP_DATABASE_URL` rotado en producción). Pendiente de
+      que quien continúe el proyecto tenga las cuentas — `docs/deploy.md`
+      tiene el paso a paso completo, incluyendo el paso de seguridad que
+      no se puede saltear (rotar el password de `tenanthub_app`).
 
 ---
 
@@ -285,3 +327,7 @@ por dominio de email. Ver el comentario en el `afterAll` de
    terminado (Sprint 4 asume que `role` ya viaja en el JWT desde Sprint 1,
    Sprint 5 asume que `PlanGuard` puede apoyarse en el mismo patrón que
    `TenantGuard`, etc.).
+5. Para deployar de verdad: `docs/deploy.md` tiene el paso a paso
+   completo para Render + Vercel, incluido el paso de seguridad
+   obligatorio (rotar el password de `tenanthub_app`) que nadie más que
+   quien tenga las credenciales puede ejecutar.

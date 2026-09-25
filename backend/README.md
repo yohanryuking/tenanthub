@@ -22,6 +22,14 @@ npm test        # unit tests
 npm run test:e2e # negative RLS tests + auth/onboarding + tasks + roles/memberships + plan/audit-log flows, over real HTTP
 ```
 
+## Production build
+
+`npm run build && npm run start:prod` (or `start:prod:migrate` to also
+run pending migrations first) — same thing `Dockerfile` does. See
+[`../docs/deploy.md`](../docs/deploy.md) for the actual hosting
+walkthrough (Render + a required password-rotation step before this ever
+serves real traffic).
+
 ## Writing a new e2e test file
 
 Jest runs test files in parallel, and they all share the same dev

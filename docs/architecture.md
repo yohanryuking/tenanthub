@@ -1,10 +1,9 @@
 # Arquitectura — TenantHub
 
-> Estado: Sprint 0 a 5 implementados (modelo multi-tenant con RLS +
-> auth/onboarding completo + `tasks` como feature real + roles/permisos +
-> planes/feature flags + audit log). Este documento describe lo que existe
-> hoy y cómo encaja con lo que falta — ver `roadmap.md` para el detalle de
-> los sprints pendientes.
+> Estado: Sprint 0 a 5 implementados, Sprint 6 preparado pero sin deploy
+> real ejecutado (falta credenciales de hosting, ver `docs/deploy.md`).
+> Este documento describe lo que existe hoy y cómo encaja con lo que
+> falta — ver `roadmap.md` para el detalle de los sprints pendientes.
 
 ## Resumen
 
@@ -395,26 +394,32 @@ tenanthub/
 │   │   ├── organizations/       -- invitaciones, memberships, plan de la org, audit log
 │   │   ├── tasks/                -- CRUD + paginación/filtros + export.csv, cero filtros manuales por org
 │   │   └── health/
-│   └── test/
-│       ├── rls/                  -- tests negativos de RLS contra Postgres real (incl. audit_log)
-│       ├── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
-│       ├── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
-│       ├── memberships/            -- tests e2e de RolesGuard, cambio de rol, último-admin
-│       ├── plan/                    -- tests e2e de PlanGuard/@RequiresPlan
-│       └── audit-log/                -- tests e2e de que las 5 acciones sensibles quedan auditadas
+│   ├── test/
+│   │   ├── rls/                  -- tests negativos de RLS contra Postgres real (incl. audit_log)
+│   │   ├── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
+│   │   ├── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
+│   │   ├── memberships/            -- tests e2e de RolesGuard, cambio de rol, último-admin
+│   │   ├── plan/                    -- tests e2e de PlanGuard/@RequiresPlan
+│   │   └── audit-log/                -- tests e2e de que las 5 acciones sensibles quedan auditadas
+│   └── Dockerfile             -- imagen de producción (Sprint 6)
 ├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks, members, audit-log
 │   ├── e2e/                  -- suite Playwright (crear→ver→editar→completar→eliminar, filtros, paginación)
+│   ├── scripts/record-demo.js -- graba el video demo (Sprint 6)
+│   ├── vercel.json             -- build + rewrite de SPA (Sprint 6)
 │   ├── playwright.config.ts
 │   └── src/app/
 │       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh), HasRoleDirective
 │       ├── core/tasks/            -- TasksService (incl. exportCsv)
 │       ├── core/organizations/    -- InvitationsService, MembershipsService, OrganizationService, AuditLogService
 │       └── features/              -- login, register, accept-invitation, dashboard, tasks, members, audit-log
+├── demo/                     # video demo (Sprint 6) + README explicando cada paso
 ├── docs/
 │   ├── architecture.md      -- este archivo
 │   ├── roadmap.md
 │   ├── threat-model.md
+│   ├── deploy.md            -- guía de deploy (Sprint 6)
 │   └── decisions/           -- ADRs
+├── render.yaml                -- blueprint de Render: backend + Postgres (Sprint 6)
 └── docker-compose.yml        -- Postgres local para desarrollo
 ```
 
@@ -515,7 +520,34 @@ npm start
   `.github/workflows/frontend-ci.yml` (build + unit tests de Angular en
   Chrome headless), y `.github/workflows/e2e-ci.yml` (Sprint 3: levanta
   Postgres + backend + Angular dev server y corre la suite Playwright
-  completa contra el stack real).
+  completa contra el stack real). Ambos workflows de CI tienen además un
+  job `deploy` (Sprint 6) que corre solo si los tests pasaron y solo en
+  push a `main`.
+
+## Deploy (Sprint 6)
+
+Ver `docs/deploy.md` para la guía completa (Render para el backend +
+Postgres administrado, Vercel para el frontend, por qué se eligieron esos
+sobre las alternativas). Resumen de lo que cambió en el código para que
+el deploy fuera posible:
+
+- `backend/Dockerfile`: una sola imagen (no multi-stage) porque el
+  contenedor necesita el Prisma CLI en el arranque de todos modos, para
+  correr `prisma migrate deploy` antes de levantar la app.
+- `main.ts`: `CORS_ORIGIN` configurable por env var (antes reflejaba
+  cualquier origen siempre) y el server bindea a `0.0.0.0` en vez de
+  `localhost` — requisito de cualquier host containerizado.
+
+**Bug real encontrado preparando esto**: `npm run start:prod`
+(`node dist/main.js`, el script que ya existía desde la Fase 1) nunca
+había funcionado. `tsconfig.build.json` no restringía la compilación a
+`src/`, así que `nest build` calculaba la raíz común de todos los `.ts`
+que veía — incluyendo `prisma/seed.ts` — y terminaba emitiendo
+`dist/src/main.js`, no `dist/main.js`. Nadie lo notó en cinco sprints
+porque el servidor siempre se arrancó a mano con
+`node dist/src/main.js` durante el desarrollo. El fix fue agregar
+`"include": ["src"]` a `tsconfig.build.json`; verificado corriendo
+`npm run start:prod` de punta a punta después del cambio.
 
 ## Qué NO está implementado todavía
 
@@ -535,4 +567,8 @@ de alcance de esta fase:
   (`export.csv`) — el mecanismo (`PlanGuard`/`@RequiresPlan`) es
   reutilizable para más features, pero no se agregaron más porque Sprint 5
   no pedía más de un ejemplo concreto.
-- Deploy productivo (Sprint 6).
+- Deploy productivo ejecutado (Sprint 6): la configuración y la guía
+  existen (`render.yaml`, `frontend/vercel.json`, `docs/deploy.md`), pero
+  nadie corrió el paso a paso todavía — este entorno de desarrollo no
+  tiene credenciales de Render/Vercel. Quien continúe con cuentas reales
+  puede seguir `docs/deploy.md` directamente.

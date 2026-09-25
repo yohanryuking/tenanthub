@@ -19,6 +19,7 @@ npm-debug.log*
 coverage/
 frontend/playwright-report/
 frontend/test-results/
+frontend/demo-recording/
 
 # Editor / OS
 .vscode/

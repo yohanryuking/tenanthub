@@ -38,3 +38,19 @@ jobs:
         run: npx ng test --watch=false --browsers=ChromeHeadless
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+
+  deploy:
+    # Same gating as backend-ci.yml's deploy job — see docs/deploy.md.
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel deploy
+        env:
+          DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "VERCEL_DEPLOY_HOOK secret not set — skipping deploy. See docs/deploy.md."
+            exit 0
+          fi
+          curl -fsS -X POST "$DEPLOY_HOOK"

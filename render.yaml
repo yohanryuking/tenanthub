@@ -1,0 +1,46 @@
+# Render Blueprint — see docs/deploy.md for the full walkthrough,
+# including the manual step this file can't automate: rotating the
+# tenanthub_app role's password (hardcoded to a dev-only default in
+# backend/prisma/migrations/.../rls_policies/migration.sql) before this
+# ever serves real traffic.
+databases:
+  - name: tenanthub-db
+    databaseName: tenanthub
+    user: tenanthub
+    plan: free
+    postgresMajorVersion: 16
+
+services:
+  - type: web
+    name: tenanthub-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Owner-role connection string, used only by `prisma migrate deploy`
+      # at boot (see backend/Dockerfile's CMD) — never by the running app.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tenanthub-db
+          property: connectionString
+      # tenanthub_app's password must be rotated after the first deploy
+      # (it starts as the dev-only default from the RLS migration) — set
+      # this manually once you have, see docs/deploy.md.
+      - key: APP_DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 15m
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: '30'
+      - key: INVITATION_TTL_DAYS
+        value: '7'
+      # Set to the deployed frontend's URL (e.g. https://tenanthub.vercel.app)
+      # once you have it — leaving this unset reflects any origin.
+      - key: CORS_ORIGIN
+        sync: false
+      - key: PORT
+        value: '3000'
