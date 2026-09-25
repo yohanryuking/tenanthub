@@ -139,22 +139,48 @@ de la app en vez de vivir dentro del dashboard genérico.
       en PATCH como en DELETE, verificado además comprobando con el rol
       owner que la fila de la otra organización quedó intacta.
 
-## Sprint 4 — Roles y permisos ⬜
+## Sprint 4 — Roles y permisos ✅
 
-- [ ] Guard de NestJS `RolesGuard` + decorator `@Roles('admin')` que lee
-      `request.tenant.role` (ya viaja en el JWT desde Sprint 1) para
-      restringir endpoints (ej. invitar miembros o cambiar el plan).
-      Reemplazar el chequeo manual de `InvitationsService.create()`
-      (Sprint 2) por este decorator es el primer caso de uso real.
-- [ ] Angular: directiva estructural `*appHasRole="'admin'"` para ocultar
-      UI que el usuario no puede usar (además del guard de backend — la
-      UI nunca es la única barrera).
-- [ ] Endpoint para que un `admin` cambie el rol de otro miembro
-      (`PATCH /memberships/:id`), con la regla de que una organización no
-      puede quedarse sin ningún admin.
-- [ ] Tests de autorización: un `member` que llama un endpoint
-      admin-only recibe 403; un admin no puede degradarse a sí mismo si es
-      el único admin restante.
+- [x] Guard de NestJS `RolesGuard` + decorator `@Roles('admin')`
+      (`backend/src/common/roles/`) que lee `request.tenant.role` (ya
+      viajaba en el JWT desde Sprint 1) para restringir endpoints. El
+      chequeo manual de `InvitationsService.create()` (Sprint 2) se
+      reemplazó por `@Roles('admin') @UseGuards(RolesGuard)` en el
+      controller — el service quedó sin ninguna lógica de autorización.
+- [x] Angular: directiva estructural `*appHasRole="'admin'"`
+      (`frontend/src/app/core/auth/has-role.directive.ts`, con soporte
+      para `; else plantilla`) para ocultar UI que el usuario no puede
+      usar — el dashboard y `/members` la usan. Sigue siendo solo UX: el
+      backend es la barrera real en los dos casos.
+- [x] `GET /memberships` (cualquier miembro) y `PATCH /memberships/:id`
+      (solo `admin`, vía `@Roles`) para cambiar el rol de otro miembro
+      (`backend/src/organizations/memberships.*`). La regla de "una
+      organización no puede quedarse sin ningún admin" se implementa con
+      un `SELECT ... FOR UPDATE` sobre las membresías admin del org antes
+      de recontar, para serializar cambios de rol concurrentes y evitar
+      que dos demociones simultáneas dejen el org en cero admins.
+- [x] Angular: `/members` (`frontend/src/app/features/members/`) lista
+      los miembros de la organización; un admin ve un `<select>` de rol
+      por fila (oculto para member vía `*appHasRole`), un member ve solo
+      un badge de solo lectura.
+- [x] Tests de autorización: 5 casos e2e nuevos
+      (`backend/test/memberships/memberships.e2e-spec.ts`) — listar es
+      público para cualquier rol, un `member` no puede cambiar roles
+      (403), promover a un member funciona, el admin único no puede
+      degradarse (409) pero sí una vez que hay dos, y un id de membership
+      de otra organización da 404 (no 403), igual que con `tasks`.
+
+### Nota: los cambios de rol tardan hasta el próximo refresh en verse reflejados
+
+El JWT de acceso es una foto del rol al momento de emitirse. Cuando un
+admin cambia el rol de otro miembro, ese miembro sigue actuando con su rol
+viejo hasta que su token se renueve —`POST /auth/refresh` relee el rol
+actual desde `memberships` en cada llamada (`auth_consume_refresh_token`,
+Sprint 2), así que el cambio se ve en el próximo refresh o login, nunca
+instantáneamente. Es un comportamiento esperado (documentado en
+`docs/architecture.md` y `docs/threat-model.md`), no un bug — la
+alternativa (consultar la base en cada request para leer el rol en vez de
+confiar en el JWT) rompería el punto de tener JWT stateless para empezar.
 
 ## Sprint 5 — Planes, feature flags y audit log ⬜
 

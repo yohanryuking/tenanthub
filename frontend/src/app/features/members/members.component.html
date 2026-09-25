@@ -1,0 +1,40 @@
+<div class="members-page">
+  <header>
+    <h1>Miembros</h1>
+    <a routerLink="/dashboard">← Volver</a>
+  </header>
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+
+  @if (loading()) {
+    <p>Cargando…</p>
+  } @else {
+    <ul class="member-list">
+      @for (member of members(); track member.id) {
+        <li>
+          <span class="email">
+            {{ member.user.email }}
+            @if (isSelf(member)) {
+              <span class="you">(vos)</span>
+            }
+          </span>
+
+          <span *appHasRole="'admin'; else roleBadge">
+            <select
+              [value]="member.role"
+              (change)="changeRole(member, $any($event.target).value)"
+            >
+              <option value="member">member</option>
+              <option value="admin">admin</option>
+            </select>
+          </span>
+          <ng-template #roleBadge>
+            <span class="role-badge">{{ member.role }}</span>
+          </ng-template>
+        </li>
+      }
+    </ul>
+  }
+</div>

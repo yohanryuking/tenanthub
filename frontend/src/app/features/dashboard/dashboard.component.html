@@ -15,20 +15,24 @@
     <a class="link-button" routerLink="/tasks">Ver tareas →</a>
   </section>
 
-  @if (auth.claims()?.role === 'admin') {
-    <section class="card">
-      <h2>Invitar miembro</h2>
-      <form [formGroup]="inviteForm" (ngSubmit)="invite()" class="inline-form">
-        <input type="email" formControlName="email" placeholder="email@ejemplo.com" />
-        <select formControlName="role">
-          <option value="member">member</option>
-          <option value="admin">admin</option>
-        </select>
-        <button type="submit">Invitar</button>
-      </form>
-      @if (invitationResult()) {
-        <p class="result">{{ invitationResult() }}</p>
-      }
-    </section>
-  }
+  <section class="card">
+    <h2>Miembros</h2>
+    <p>Vé quién forma parte de la organización y su rol.</p>
+    <a class="link-button" routerLink="/members">Ver miembros →</a>
+  </section>
+
+  <section class="card" *appHasRole="'admin'">
+    <h2>Invitar miembro</h2>
+    <form [formGroup]="inviteForm" (ngSubmit)="invite()" class="inline-form">
+      <input type="email" formControlName="email" placeholder="email@ejemplo.com" />
+      <select formControlName="role">
+        <option value="member">member</option>
+        <option value="admin">admin</option>
+      </select>
+      <button type="submit">Invitar</button>
+    </form>
+    @if (invitationResult()) {
+      <p class="result">{{ invitationResult() }}</p>
+    }
+  </section>
 </div>

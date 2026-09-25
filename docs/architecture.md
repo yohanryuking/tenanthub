@@ -1,9 +1,9 @@
 # Arquitectura — TenantHub
 
-> Estado: Sprint 0, 1, 2 y 3 implementados (modelo multi-tenant con RLS +
-> auth/onboarding completo + `tasks` como feature real: paginación,
-> filtros, edición, borrado, propia ruta en Angular, suite Playwright
-> versionada). Este documento describe lo que existe hoy y cómo encaja
+> Estado: Sprint 0 a 4 implementados (modelo multi-tenant con RLS +
+> auth/onboarding completo + `tasks` como feature real + roles/permisos:
+> `RolesGuard` reutilizable, gestión de miembros con protección del
+> último admin). Este documento describe lo que existe hoy y cómo encaja
 > con lo que falta — ver `roadmap.md` para el detalle de los sprints
 > pendientes.
 
@@ -185,6 +185,52 @@ Ver ADR 0005 para el razonamiento completo.
   invitado no tiene cuenta todavía, pide password y la crea en el mismo
   paso. Responde con un par de tokens — quedás logueado al aceptar.
 
+## Roles y permisos (Sprint 4)
+
+`RolesGuard` + `@Roles(...)` (`backend/src/common/roles/`) es la versión
+reutilizable de lo que `InvitationsService` hacía a mano en Sprint 2. Se
+aplica por ruta con `@UseGuards(RolesGuard)`, y como corre **después** del
+`TenantGuard` global (que ya dejó `request.tenant` seteado), solo necesita
+comparar `request.tenant.role` contra los roles requeridos — no resuelve
+tenant ni autentica nada por sí mismo:
+
+```ts
+@Roles('admin')
+@UseGuards(RolesGuard)
+@Post()
+create(@Body() dto: CreateInvitationDto, @CurrentTenant() tenant: TenantClaims) { ... }
+```
+
+`GET /memberships` (cualquier rol) y `PATCH /memberships/:id` (solo
+`admin`) viven en `MembershipsService`. El invariante "una organización no
+puede quedarse sin admins" se resuelve así:
+
+1. `SELECT id FROM memberships WHERE org_id = ... AND role = 'admin' FOR UPDATE`
+   dentro de la misma transacción tenant-scoped — bloquea las filas admin
+   de este org para que un segundo request concurrente sobre el mismo org
+   tenga que esperar a que el primero termine.
+2. Si la membership a cambiar es admin y el nuevo rol es member, cuenta
+   cuántos **otros** admins quedan; si es cero, `409 Conflict`.
+
+Sin el `FOR UPDATE`, dos requests simultáneos degradando a dos admins
+distintos del mismo org podrían leer "hay otro admin" cada uno antes de
+que el otro confirme, y dejar el org en cero admins — el mismo tipo de
+condición de carrera que un `SELECT` sin bloqueo siempre tiene bajo
+concurrencia. Serializar por org (no por fila individual) es lo que cierra
+esa ventana.
+
+**Un id de otra organización en `PATCH /memberships/:id` da 404, no
+403** — mismo razonamiento que `tasks` en Sprint 3: RLS hace la fila
+invisible, así que la API no puede confirmar que existe.
+
+**Los cambios de rol no son instantáneos**: el rol vive en el JWT, no se
+consulta en cada request. Alguien recién promovido sigue actuando con su
+rol viejo hasta su próximo `POST /auth/refresh` (que sí relee el rol
+actual desde `memberships`, ver `auth_consume_refresh_token` en Sprint 2)
+o su próximo login. Es un trade-off consciente: consultar `memberships` en
+cada request para evitar esta latencia anularía el punto de tener un JWT
+stateless.
+
 ## Frontend (Angular)
 
 `frontend/src/app/core/auth/`:
@@ -202,13 +248,22 @@ Ver ADR 0005 para el razonamiento completo.
   intenta un refresh una sola vez y reintenta la request original —
   varias requests fallando a la vez comparten el mismo refresh en vuelo
   en vez de disparar N refreshes.
+- `has-role.directive.ts` (Sprint 4): `*appHasRole="'admin'"` — versión
+  Angular del mismo control de acceso que `RolesGuard` hace en el backend,
+  pero solo para UX (ocultar un botón que igual fallaría en el servidor
+  si se apretara). Soporta `; else plantilla` para mostrar una alternativa
+  en vez de nada (ej. un badge de solo lectura en `/members`).
 
 Rutas: `/login`, `/register`, `/accept-invitation/:token` (públicas),
-`/dashboard` y `/tasks` (protegidas por `authGuard`). El dashboard quedó
-con la info de la organización y el formulario de invitación; `tasks`
-(Sprint 3, `frontend/src/app/features/tasks/`) es su propia feature con
-listado paginado, filtros por texto/estado (debounced) y edición inline —
-reutiliza el mismo `authGuard`/`authInterceptor` de Sprint 2 sin tocarlos.
+`/dashboard`, `/tasks` y `/members` (protegidas por `authGuard`). El
+dashboard quedó con la info de la organización, el formulario de
+invitación (detrás de `*appHasRole="'admin'"`) y links a `/tasks` y
+`/members`; `tasks` (Sprint 3) es su propia feature con listado paginado,
+filtros por texto/estado (debounced) y edición inline; `members` (Sprint
+4, `frontend/src/app/features/members/`) lista los miembros de la
+organización con un `<select>` de rol por fila si sos admin, o un badge
+de solo lectura si no. Todas reutilizan el mismo
+`authGuard`/`authInterceptor` de Sprint 2 sin tocarlos.
 
 ## Modelo de datos
 
@@ -252,23 +307,25 @@ tenanthub/
 │   ├── src/
 │   │   ├── common/
 │   │   │   ├── prisma/          -- PrismaService (conecta como tenanthub_app)
-│   │   │   └── tenant/          -- Guard, Interceptor, AsyncLocalStorage, decorators
+│   │   │   ├── tenant/          -- Guard, Interceptor, AsyncLocalStorage, decorators
+│   │   │   └── roles/            -- RolesGuard + @Roles() (Sprint 4)
 │   │   ├── auth/                -- register, login, orgs, refresh, logout, accept-invitation
-│   │   ├── organizations/       -- invitaciones (crear, listar)
+│   │   ├── organizations/       -- invitaciones (crear, listar) + memberships (listar, cambiar rol)
 │   │   ├── tasks/                -- CRUD + paginación/filtros, cero filtros manuales por org
 │   │   └── health/
 │   └── test/
 │       ├── rls/                  -- tests negativos de RLS contra Postgres real
 │       ├── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
-│       └── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
-├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks
+│       ├── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
+│       └── memberships/            -- tests e2e de RolesGuard, cambio de rol, último-admin
+├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks, members
 │   ├── e2e/                  -- suite Playwright (crear→ver→editar→completar→eliminar, filtros, paginación)
 │   ├── playwright.config.ts
 │   └── src/app/
-│       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh)
+│       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh), HasRoleDirective
 │       ├── core/tasks/            -- TasksService
-│       ├── core/organizations/    -- InvitationsService
-│       └── features/              -- login, register, accept-invitation, dashboard, tasks
+│       ├── core/organizations/    -- InvitationsService, MembershipsService
+│       └── features/              -- login, register, accept-invitation, dashboard, tasks, members
 ├── docs/
 │   ├── architecture.md      -- este archivo
 │   ├── roadmap.md
@@ -319,7 +376,7 @@ npm start
   Cada uno de estos debe **fallar** para que el test pase — es la prueba de
   que el modelo de amenazas de multi-tenancy está cubierto, no solo el
   camino feliz.
-- `test/auth/auth.e2e-spec.ts` (backend, misma suite `test:e2e`): 18 tests
+- `test/auth/auth.e2e-spec.ts` (backend, misma suite `test:e2e`): 11 tests
   sobre HTTP real contra la app NestJS completa — registro, slug
   duplicado, login con password incorrecta, listado de orgs, invitar +
   aceptar + re-aceptar (410), no-admin no puede invitar (403), rotación
@@ -332,7 +389,20 @@ npm start
   `PATCH`/`DELETE` un id de org A siempre da 404 (nunca 403), verificado
   además confirmando con el rol owner que la fila de la otra organización
   quedó intacta.
-- Frontend: `npm test` (Angular/Karma) para unit tests;
+- `test/memberships/memberships.e2e-spec.ts` (backend, Sprint 4): listar
+  es público para cualquier rol, un `member` no puede cambiar roles
+  (403 vía `RolesGuard`), promover a un member funciona y su nuevo rol se
+  ve recién tras un refresh, el admin único no puede degradarse a sí
+  mismo (409) pero sí una vez que hay dos admins, y un id de membership de
+  otra organización da 404 (nunca 403).
+- Frontend: `npm test` (Angular/Karma) para unit tests; el flujo de roles
+  (invitar → aceptar → el member no ve la UI de admin → promoverlo →
+  demostrar que sigue sin poder actuar como admin hasta refrescar su
+  sesión → el admin original se degrada una vez que hay dos → el nuevo
+  admin único no puede degradarse) se verificó con un script Playwright
+  ad-hoc contra un browser real, igual que el de Sprint 2 — no es parte
+  de la suite versionada porque el roadmap de Sprint 4 solo pedía tests
+  de autorización a nivel de backend, no e2e de Angular.
   `frontend/e2e/tasks.spec.ts` (Playwright, Sprint 3) cubre
   crear→ver→editar→completar→eliminar, filtros por texto/estado, y
   paginación, contra un browser real. Requiere el backend corriendo por
@@ -349,9 +419,9 @@ npm start
 Ver `docs/roadmap.md` para el detalle sprint por sprint. En resumen, fuera
 de alcance de esta fase:
 
-- `RolesGuard`/`@Roles()` reutilizable — hoy `InvitationsService` chequea
-  el rol a mano — y autorización fina admin/member más allá de eso
-  (Sprint 4).
+- Remover a un miembro de la organización (hoy solo se puede cambiar su
+  rol vía `PATCH /memberships/:id`; no hay `DELETE /memberships/:id` —
+  no lo pidió Sprint 4 y no se adelantó).
 - Envío real de invitaciones por email (hoy el token se loguea y se
   devuelve en la respuesta HTTP, sin proveedor SMTP).
 - Detección de reuso de un refresh token ya consumido como señal de robo

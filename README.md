@@ -6,7 +6,7 @@ que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
 **PostgreSQL + Prisma** (sin Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-## Estado actual: Sprint 0, 1, 2 y 3
+## Estado actual: Sprint 0 a 4
 
 Implementado y probado:
 
@@ -25,10 +25,15 @@ Implementado y probado:
   edición inline, marcar completada, borrar — con su propia ruta
   `/tasks` en Angular. Un id de otra organización siempre da 404, nunca
   403, para no filtrar que la fila existe.
-- 24 tests e2e de backend sobre HTTP real (auth/onboarding + tasks) más
-  los 7 de RLS directos — 31 tests en total, todos verificando que un
-  ataque falla, no solo que el camino feliz funciona. Más una suite
-  Playwright versionada (`frontend/e2e/`) contra un browser real.
+- Roles y permisos: `RolesGuard`/`@Roles()` reutilizable en el backend,
+  gestión de miembros (`/members`) con cambio de rol protegido — una
+  organización nunca puede quedarse sin ningún admin, ni siquiera bajo
+  dos requests concurrentes.
+- 29 tests e2e de backend sobre HTTP real (RLS directo + auth/onboarding
+  + tasks + roles/memberships) más 1 unit test — 30 tests en total, la
+  mayoría verificando que un ataque falla, no solo que el camino feliz
+  funciona. Más una suite Playwright versionada (`frontend/e2e/`) contra
+  un browser real.
 - CI (backend, frontend y un job e2e full-stack) que levanta Postgres,
   aplica migraciones y corre toda la suite en cada push/PR.
 

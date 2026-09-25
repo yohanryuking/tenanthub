@@ -50,9 +50,20 @@ haya escrito quien la haya escrito.
 | `app.current_org` "se filtra" entre requests concurrentes de distintos tenants | Un tenant vería el contexto de otro bajo carga | `set_config(..., true)` es transaction-local (Postgres), y el cliente que la seteó vive en un `AsyncLocalStorage` por request — no hay estado mutable compartido en el proceso de Node | Diseño en `tenant.interceptor.ts` |
 | Login necesita cruzar tenants antes de que exista un tenant | Tentación de dar bypass general de RLS al rol de la app | Dos funciones `SECURITY DEFINER` (`auth_login_lookup`, `auth_list_orgs_for_email`) que solo devuelven la fila que matchea los parámetros exactos recibidos — superficie mínima y auditable en un solo archivo | `migrations/20260914213000_auth_lookup_function/` |
 | Enumeración de IDs (UUID v4 no es "secreto", pero tampoco es fácil de adivinar) | Un atacante intenta acceder a un recurso por ID sin pertenecer a esa org | Cubierto arriba por RLS — el ID correcto no sirve de nada sin el `org_id` correcto en la sesión | Tests de UPDATE/DELETE "adivinando IDs" |
+| Un `member` llama un endpoint que debería ser solo de `admin` (invitar, cambiar roles) | Escalada de privilegios horizontal dentro del propio tenant | `RolesGuard` + `@Roles('admin')` compara `request.tenant.role` (del JWT firmado, no de nada que el cliente controle) antes de ejecutar el handler | `test/memberships/memberships.e2e-spec.ts` ("forbids a member...") |
+| Dos requests concurrentes degradan a dos admins distintos del mismo org al mismo tiempo | El org queda con cero admins (nadie puede volver a invitar, cambiar roles, ni administrar nada) | `SELECT ... FOR UPDATE` sobre las membresías admin del org antes de contar cuántas quedarían — serializa los cambios de rol concurrentes de ese org en vez de dejar que ambos lean "hay otro admin" a la vez | `memberships.service.ts` (comentario junto al `FOR UPDATE`) |
 
 ## Qué NO cubre este modelo de amenazas todavía (riesgo residual documentado)
 
+- **Degradar el rol de un usuario no revoca su access token vigente**: si
+  un admin le quita permisos de admin a alguien, esa persona conserva su
+  rol viejo en el JWT hasta que expira (15 min) o hasta su próximo
+  refresh — no hay una forma de invalidar un access token ya emitido
+  antes de tiempo. Para el caso contrario (quitarle *todo* acceso a
+  alguien, no solo bajarle el rol) esto es más serio: hoy no existe un
+  endpoint para eso (Sprint 4 solo cubre cambiar de `admin` a `member` y
+  viceversa, no expulsar a alguien de la organización), así que el caso
+  no está resuelto ni parcialmente.
 - **Rate limiting / fuerza bruta sobre `/auth/login` y `/auth/refresh`**:
   no implementado todavía. Un atacante podría intentar muchas
   combinaciones de password, o intentar adivinar refresh tokens (poco

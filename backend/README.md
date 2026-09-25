@@ -19,7 +19,7 @@ npm run start:dev
 
 ```bash
 npm test        # unit tests
-npm run test:e2e # negative RLS tests + full auth/onboarding + tasks flows, over real HTTP
+npm run test:e2e # negative RLS tests + auth/onboarding + tasks + roles/memberships flows, over real HTTP
 ```
 
 ## Adding a new tenant-scoped table
