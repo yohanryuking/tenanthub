@@ -42,5 +42,11 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/members/members.component').then((m) => m.MembersComponent),
   },
+  {
+    path: 'audit-log',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/audit-log/audit-log.component').then((m) => m.AuditLogComponent),
+  },
   { path: '**', redirectTo: 'dashboard' },
 ];

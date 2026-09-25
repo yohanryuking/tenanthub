@@ -6,7 +6,7 @@ que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
 **PostgreSQL + Prisma** (sin Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-## Estado actual: Sprint 0 a 4
+## Estado actual: Sprint 0 a 5
 
 Implementado y probado:
 
@@ -15,9 +15,9 @@ Implementado y probado:
   deny-by-default en cada tabla tenant-scoped.
 - Rol de aplicación no-owner (`tenanthub_app`) que RLS realmente
   restringe — el backend nunca se conecta con un rol que bypasse RLS.
-- 7 tests **negativos** de RLS contra Postgres real: intentan leer,
-  actualizar, borrar e insertar datos de otro tenant, y verifican que
-  todo eso falle.
+- 10 tests **negativos** de RLS contra Postgres real: intentan leer,
+  actualizar, borrar e insertar datos de otro tenant (o borrar auditoría
+  sin tener el privilegio), y verifican que todo eso falle.
 - Onboarding completo: registro (crea org + admin en un paso), login con
   selector de organización, invitar miembros, aceptar invitación, sesión
   sostenida con refresh tokens rotados (access token de 15 min).
@@ -29,11 +29,15 @@ Implementado y probado:
   gestión de miembros (`/members`) con cambio de rol protegido — una
   organización nunca puede quedarse sin ningún admin, ni siquiera bajo
   dos requests concurrentes.
-- 29 tests e2e de backend sobre HTTP real (RLS directo + auth/onboarding
-  + tasks + roles/memberships) más 1 unit test — 30 tests en total, la
-  mayoría verificando que un ataque falla, no solo que el camino feliz
-  funciona. Más una suite Playwright versionada (`frontend/e2e/`) contra
-  un browser real.
+- Planes y auditoría: `PlanGuard`/`@RequiresPlan('pro')` gatea el export
+  de CSV de tareas; un admin puede cambiar el plan de su org (simulando
+  un webhook de billing); las cinco acciones sensibles (login, cambio de
+  plan, invitación, cambio de rol, borrado de tarea) quedan registradas
+  en `/audit-log`, visible solo para admins.
+- 38 tests e2e de backend sobre HTTP real y SQL directo, más 1 unit test
+  — 39 en total, la mayoría verificando que un ataque falla, no solo que
+  el camino feliz funciona. Más una suite Playwright versionada
+  (`frontend/e2e/`) contra un browser real.
 - CI (backend, frontend y un job e2e full-stack) que levanta Postgres,
   aplica migraciones y corre toda la suite en cada push/PR.
 
@@ -47,7 +51,7 @@ Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
 | [docs/architecture.md](docs/architecture.md) | Cómo funciona el aislamiento de principio a fin, estructura del repo, cómo correr todo |
 | [docs/roadmap.md](docs/roadmap.md) | Qué está hecho y qué falta, sprint por sprint |
 | [docs/threat-model.md](docs/threat-model.md) | Qué ataques se probaron, qué mitiga cada cosa, riesgo residual documentado |
-| [docs/decisions/](docs/decisions/) | ADRs: por qué Postgres normal en vez de Supabase, por qué Prisma, por qué el diseño de roles de RLS, por qué auth propia |
+| [docs/decisions/](docs/decisions/) | ADRs: por qué Postgres normal en vez de Supabase, por qué Prisma, diseño de roles de RLS, auth propia, refresh tokens, plan/audit log |
 
 ## Quickstart
 

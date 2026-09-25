@@ -11,11 +11,13 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { AuditLogService } from '../common/audit/audit-log.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { generateRefreshToken, hashRefreshToken } from './refresh-token.util';
 
 type Role = 'admin' | 'member';
+type Plan = 'free' | 'pro';
 
 interface LoginLookupRow {
   user_id: string;
@@ -23,18 +25,27 @@ interface LoginLookupRow {
   org_id: string;
   org_slug: string;
   role: Role;
+  org_plan: Plan;
 }
 
 interface RegisterRow {
   user_id: string;
   org_id: string;
   role: Role;
+  org_plan: Plan;
 }
 
 interface RefreshRow {
   user_id: string;
   org_id: string;
   role: Role;
+  plan: Plan;
+}
+
+interface AcceptInvitationRow {
+  org_id: string;
+  role: Role;
+  plan: Plan;
 }
 
 export interface TokenPair {
@@ -48,6 +59,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async register(dto: RegisterDto): Promise<TokenPair> {
@@ -57,7 +69,7 @@ export class AuthService {
         SELECT * FROM auth_register(${dto.orgName}, ${dto.orgSlug}, ${dto.email}, ${passwordHash})
       `;
       const row = rows[0];
-      return this.issueTokenPair(row.user_id, row.org_id, row.role);
+      return this.issueTokenPair(row.user_id, row.org_id, row.role, row.org_plan);
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -90,7 +102,12 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return this.issueTokenPair(row.user_id, row.org_id, row.role);
+    // No tenant context exists yet at this point in the request — same
+    // reasoning as the auth_* lookup functions themselves, see
+    // AuditLogService.writeCrossTenant.
+    await this.auditLog.writeCrossTenant(row.org_id, row.user_id, 'auth.login', 'user', row.user_id);
+
+    return this.issueTokenPair(row.user_id, row.org_id, row.role, row.org_plan);
   }
 
   async listOrgsForEmail(email: string) {
@@ -111,7 +128,7 @@ export class AuthService {
       // after the token was issued.
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
-    return this.issueTokenPair(row.user_id, row.org_id, row.role);
+    return this.issueTokenPair(row.user_id, row.org_id, row.role, row.plan);
   }
 
   async logout(refreshToken: string): Promise<void> {
@@ -160,8 +177,8 @@ export class AuthService {
       });
     }
 
-    const acceptRows = await this.prisma.$queryRaw<RefreshRow[]>`
-      SELECT out_org_id AS org_id, out_role AS role
+    const acceptRows = await this.prisma.$queryRaw<AcceptInvitationRow[]>`
+      SELECT out_org_id AS org_id, out_role AS role, out_plan AS plan
       FROM auth_accept_invitation(${tokenHash}, ${user.id}::uuid)
     `;
     const accepted = acceptRows[0];
@@ -171,18 +188,20 @@ export class AuthService {
       throw new GoneException('Invitation is no longer valid');
     }
 
-    return this.issueTokenPair(user.id, accepted.org_id, accepted.role);
+    return this.issueTokenPair(user.id, accepted.org_id, accepted.role, accepted.plan);
   }
 
   private async issueTokenPair(
     userId: string,
     orgId: string,
     role: Role,
+    plan: Plan,
   ): Promise<TokenPair> {
     const accessToken = await this.jwtService.signAsync({
       sub: userId,
       orgId,
       role,
+      plan,
     });
 
     const refreshToken = generateRefreshToken();

@@ -182,30 +182,77 @@ instantáneamente. Es un comportamiento esperado (documentado en
 alternativa (consultar la base en cada request para leer el rol en vez de
 confiar en el JWT) rompería el punto de tener JWT stateless para empezar.
 
-## Sprint 5 — Planes, feature flags y audit log ⬜
+## Sprint 5 — Planes, feature flags y audit log ✅
 
-- [ ] `PlanGuard` + decorator `@RequiresPlan('pro')`: bloquea acciones
-      (ejemplo concreto: `GET /tasks/export.csv`) si `organization.plan`
-      no alcanza. La columna `plan` ya existe en `organizations` desde
-      Sprint 1.
-- [ ] `PATCH /organizations/:id/plan` (solo `admin`): simula lo que haría
-      un webhook de billing real. Documentar en el propio endpoint el
-      punto de extensión ("aquí conectaría Stripe/webhook real").
-- [ ] Servicio de auditoría (`AuditLogService`) que escribe en `audit_log`
-      (tabla y RLS ya existen desde Sprint 1) en cada acción sensible:
-      login, cambio de plan, invitación, cambio de rol, borrado de task.
-  - Decisión pendiente: ¿interceptor global que audita automáticamente
-    marcado por decorator (`@Audit('task.created')`), o llamada explícita
-    dentro de cada service? Recomendado: decorator + interceptor, para no
-    poder "olvidarse" de auditar un endpoint nuevo — mismo principio de
-    diseño que ya se usó para RLS (fail loud, no fallback silencioso).
-- [ ] Angular: vista de historial de auditoría por organización (solo
-      admin), con paginación.
-- [ ] Tests: acción restringida por plan falla en `free` y funciona en
-      `pro`; cada acción sensible efectivamente deja una fila en
-      `audit_log`; `audit_log` respeta RLS igual que el resto (ya probado
-      a nivel de política en Sprint 1, falta probar a nivel de la
-      escritura real de la aplicación).
+- [x] `PlanGuard` + decorator `@RequiresPlan('pro')`
+      (`backend/src/common/plan/`): bloquea `GET /tasks/export.csv` si
+      `organization.plan` no alcanza. Como el rol (Sprint 4), el plan viaja
+      como claim en el JWT (`plan`), agregado a las cuatro funciones SQL
+      que emiten tokens (`auth_login_lookup`, `auth_register`,
+      `auth_accept_invitation`, `auth_consume_refresh_token`) — mismo
+      trade-off ya documentado: un cambio de plan se ve recién en el
+      próximo refresh/login de cada sesión, no instantáneamente.
+- [x] `PATCH /organizations/plan` (solo `admin`, vía `@Roles`): simula lo
+      que haría un webhook de billing real. El comentario en
+      `OrganizationService.updatePlan()` documenta el punto de extensión
+      ("una integración real reemplaza quién llama este método, no su
+      cuerpo"). También `GET /organizations/me` para que el frontend sepa
+      el plan actual sin decodificar el JWT a mano.
+- [x] `AuditLogService` (`backend/src/common/audit/`) + decorator
+      `@Audit(action, entity)` + `AuditInterceptor` aplicado por ruta
+      (nunca global, a diferencia de `TenantGuard`/`TenantInterceptor` —
+      solo un puñado de rutas son lo bastante sensibles para auditar).
+      Escribe en `audit_log` en las cinco acciones que pedía el sprint:
+      login, cambio de plan, invitación creada, cambio de rol, borrado de
+      tarea. Decisión tomada: decorator + interceptor (no llamadas
+      explícitas dentro de cada service), exactamente por la razón que
+      este mismo roadmap anticipaba — así un endpoint nuevo no puede
+      "olvidarse" de auditar silenciosamente sin que al menos quede un
+      warning en los logs (ver nota de bug real más abajo).
+- [x] Angular: vista de historial de auditoría (`/audit-log`, solo admin
+      vía `*appHasRole` + protegida server-side), con paginación; badge de
+      plan y botón para cambiarlo en el dashboard (admin), que además
+      refresca la sesión local al toque para que el propio admin vea el
+      efecto sin tener que desloguearse.
+- [x] Tests: 3 casos e2e de plan gating (`test/plan/`), 3 de audit log
+      end-to-end (`test/audit-log/`) cubriendo las cinco acciones +
+      aislamiento por org + que un member no puede leer la auditoría, y
+      3 negativos de RLS específicos de `audit_log`
+      agregados a `test/rls/` (lectura cruzada, `WITH CHECK` en INSERT, y
+      que `tenanthub_app` no puede hacer `DELETE` ahí ni para su propio
+      org — el grant se revocó desde Sprint 1).
+
+### Bug real encontrado y corregido: el audit write se perdía silenciosamente
+
+La primera versión de `AuditInterceptor` escribía el audit log dentro de
+un `tap()` de RxJS sin esperar la promesa que devuelve
+`auditLog.write(...)`. `tap` no espera callbacks async — el `INSERT` corría
+"en algún momento" después de que el resto del pipeline ya había seguido
+su curso, así que a veces terminaba ejecutándose sobre una conexión cuya
+transacción (`TenantInterceptor`'s `$transaction`) ya había hecho commit.
+El síntoma: `GET /audit-log` devolvía siempre `total: 0`, sin ningún error
+visible en los logs. Se encontró probando el flujo completo por HTTP real
+(la misma disciplina que atrapó el bug de Sprint 2 en
+`auth_accept_invitation`), no con una prueba unitaria aislada. El fix fue
+cambiar `tap()` por `concatMap()` con una función async, para que el write
+quede genuinamente encadenado al stream y se espere antes de que la
+transacción pueda cerrarse. Ver el comentario en
+`audit.interceptor.ts` y `docs/architecture.md`.
+
+### Bug real encontrado y corregido: contaminación entre archivos de test
+
+Al correr las nuevas suites de Sprint 5 junto con las de sprints
+anteriores, empezaron a fallar tests de `memberships.e2e-spec.ts` de forma
+intermitente (una membership "desaparecía" a mitad de un test). La causa:
+`auth.e2e-spec.ts` (Sprint 2) limpiaba usuarios con
+`user.deleteMany({ email: { contains: '@e2e.test' } })` — un dominio que
+**todas** las suites comparten. Como Jest corre archivos de test en
+paralelo, el `afterAll` de una suite podía borrar usuarios que otra suite,
+corriendo al mismo tiempo, todavía estaba usando activamente (y `User` en
+cascada borra sus `Membership`s). El fix: cada suite limpia solo sus
+propias organizaciones (por prefijo único de slug), ninguna borra usuarios
+por dominio de email. Ver el comentario en el `afterAll` de
+`test/auth/auth.e2e-spec.ts`.
 
 ## Sprint 6 — Deploy y presentación ⬜
 

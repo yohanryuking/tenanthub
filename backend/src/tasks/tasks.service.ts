@@ -69,6 +69,21 @@ export class TasksService {
     }
   }
 
+  async exportCsv(): Promise<string> {
+    const tasks = await this.tenantContext.getClient().task.findMany({
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const header = ['id', 'title', 'description', 'done', 'createdAt'];
+    const rows = tasks.map((task) =>
+      [task.id, task.title, task.description ?? '', String(task.done), task.createdAt.toISOString()]
+        .map(csvEscape)
+        .join(','),
+    );
+
+    return [header.join(','), ...rows].join('\n');
+  }
+
   /**
    * Prisma's singular update()/delete() throw P2025 when the WHERE clause
    * matches zero rows. RLS makes another org's task invisible rather than
@@ -82,4 +97,11 @@ export class TasksService {
     }
     return err;
   }
+}
+
+function csvEscape(value: string): string {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }

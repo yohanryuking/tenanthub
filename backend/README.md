@@ -19,8 +19,21 @@ npm run start:dev
 
 ```bash
 npm test        # unit tests
-npm run test:e2e # negative RLS tests + auth/onboarding + tasks + roles/memberships flows, over real HTTP
+npm run test:e2e # negative RLS tests + auth/onboarding + tasks + roles/memberships + plan/audit-log flows, over real HTTP
 ```
+
+## Writing a new e2e test file
+
+Jest runs test files in parallel, and they all share the same dev
+Postgres instance. Each file's `afterAll` must clean up **only its own**
+fixtures — give your org slugs a prefix unique to that file (e.g.
+`e2e-yourfeature-`) and delete `organization` rows by that prefix.
+**Never delete `user` rows by email domain** (`@e2e.test` is shared by
+every suite) — a user's memberships/audit rows cascade-delete with it,
+so one suite's cleanup can silently corrupt another suite's still-running
+test. This bit us once already (see the Sprint 5 section of
+`docs/roadmap.md`); orphaned user rows are harmless test debt, a
+cross-suite deletion race is not.
 
 ## Adding a new tenant-scoped table
 

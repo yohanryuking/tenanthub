@@ -3,7 +3,10 @@
     <div>
       <h1>TenantHub</h1>
       @if (auth.claims(); as claims) {
-        <p class="claims">org: <code>{{ claims.orgId }}</code> · rol: <code>{{ claims.role }}</code></p>
+        <p class="claims">
+          org: <code>{{ claims.orgId }}</code> · rol: <code>{{ claims.role }}</code> ·
+          plan: <code class="plan-badge" [class.pro]="claims.plan === 'pro'">{{ claims.plan }}</code>
+        </p>
       }
     </div>
     <button class="logout" (click)="logout()">Salir</button>
@@ -35,4 +38,27 @@
       <p class="result">{{ invitationResult() }}</p>
     }
   </section>
+
+  @if (organization(); as org) {
+    <section class="card" *appHasRole="'admin'">
+      <h2>Plan</h2>
+      <p>
+        Organización en plan <strong>{{ org.plan }}</strong>. El export de
+        CSV de tareas requiere plan Pro.
+      </p>
+      <button type="button" [disabled]="planChanging()" (click)="togglePlan()">
+        {{ planChanging() ? 'Actualizando…' : org.plan === 'free' ? 'Pasar a Pro' : 'Volver a Free' }}
+      </button>
+      <p class="hint">
+        Simula lo que haría un webhook de billing real (Stripe, etc.) — no
+        hay pasarela de pago conectada.
+      </p>
+    </section>
+
+    <section class="card" *appHasRole="'admin'">
+      <h2>Auditoría</h2>
+      <p>Historial de acciones sensibles de la organización.</p>
+      <a class="link-button" routerLink="/audit-log">Ver auditoría →</a>
+    </section>
+  }
 </div>

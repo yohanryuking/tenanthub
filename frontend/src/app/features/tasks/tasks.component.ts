@@ -23,6 +23,7 @@ export class TasksComponent implements OnInit, OnDestroy {
   readonly loading = signal(true);
   readonly editingId = signal<string | null>(null);
   readonly page = signal(1);
+  readonly exportError = signal<string | null>(null);
 
   readonly createForm = this.fb.nonNullable.group({
     title: ['', Validators.required],
@@ -106,4 +107,28 @@ export class TasksComponent implements OnInit, OnDestroy {
     this.page.set(page);
     this.load();
   }
+
+  exportCsv() {
+    this.exportError.set(null);
+    this.tasksService.exportCsv().subscribe({
+      next: (csv) => downloadTextFile(csv, 'tasks.csv'),
+      error: (err) => {
+        this.exportError.set(
+          err?.status === 403
+            ? 'Exportar a CSV requiere el plan Pro.'
+            : 'No se pudo exportar.',
+        );
+      },
+    });
+  }
+}
+
+function downloadTextFile(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }

@@ -13,6 +13,7 @@ export interface AccessTokenClaims {
   sub: string;
   orgId: string;
   role: 'admin' | 'member';
+  plan: 'free' | 'pro';
   iat: number;
   exp: number;
 }

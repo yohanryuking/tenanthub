@@ -44,11 +44,13 @@ export class TenantGuard implements CanActivate {
         sub: string;
         orgId: string;
         role: 'admin' | 'member';
+        plan: 'free' | 'pro';
       }>(token);
       const claims: TenantClaims = {
         userId: payload.sub,
         orgId: payload.orgId,
         role: payload.role,
+        plan: payload.plan,
       };
       request.tenant = claims;
       return true;

@@ -32,14 +32,19 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await admin.organization.deleteMany({ where: { slug: { startsWith: 'e2e-' } } });
-  await admin.user.deleteMany({ where: { email: { contains: '@e2e.test' } } });
+  // Scoped to this file's own prefix, and users are left alone — every
+  // e2e suite shares the @e2e.test email domain and runs concurrently
+  // (Jest parallelizes across files), so a broader user.deleteMany() here
+  // previously cascade-deleted other suites' live memberships/audit rows
+  // mid-run. Each suite cleaning only its own orgs is what keeps them
+  // from stepping on each other.
+  await admin.organization.deleteMany({ where: { slug: { startsWith: 'e2e-auth-' } } });
   await admin.$disconnect();
   await app.close();
 });
 
 function registerOrg() {
-  const slug = `e2e-${suffix()}`;
+  const slug = `e2e-auth-${suffix()}`;
   return request(app.getHttpServer())
     .post('/auth/register')
     .send({

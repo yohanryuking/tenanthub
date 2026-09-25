@@ -52,9 +52,22 @@ haya escrito quien la haya escrito.
 | Enumeración de IDs (UUID v4 no es "secreto", pero tampoco es fácil de adivinar) | Un atacante intenta acceder a un recurso por ID sin pertenecer a esa org | Cubierto arriba por RLS — el ID correcto no sirve de nada sin el `org_id` correcto en la sesión | Tests de UPDATE/DELETE "adivinando IDs" |
 | Un `member` llama un endpoint que debería ser solo de `admin` (invitar, cambiar roles) | Escalada de privilegios horizontal dentro del propio tenant | `RolesGuard` + `@Roles('admin')` compara `request.tenant.role` (del JWT firmado, no de nada que el cliente controle) antes de ejecutar el handler | `test/memberships/memberships.e2e-spec.ts` ("forbids a member...") |
 | Dos requests concurrentes degradan a dos admins distintos del mismo org al mismo tiempo | El org queda con cero admins (nadie puede volver a invitar, cambiar roles, ni administrar nada) | `SELECT ... FOR UPDATE` sobre las membresías admin del org antes de contar cuántas quedarían — serializa los cambios de rol concurrentes de ese org en vez de dejar que ambos lean "hay otro admin" a la vez | `memberships.service.ts` (comentario junto al `FOR UPDATE`) |
+| Un `member` llama el endpoint pro-only o el de cambiar el plan | Escalada de privilegios (feature de pago sin pagar) o modificar la facturación de la org sin ser admin | `PlanGuard`/`@RequiresPlan` y `RolesGuard`/`@Roles('admin')` respectivamente, ambos leyendo del JWT firmado | `test/plan/plan.e2e-spec.ts` ("forbids a non-admin...") |
+| Alguien borra o edita una fila de `audit_log` para cubrir sus huellas | El historial de auditoría deja de ser confiable | `DELETE` revocado de `tenanthub_app` a nivel de GRANT (no solo RLS) — ni la conexión de la app, comprometida o no, puede borrar auditoría, solo insertar | `test/rls/rls.e2e-spec.ts` ("cannot DELETE audit_log rows") |
 
 ## Qué NO cubre este modelo de amenazas todavía (riesgo residual documentado)
 
+- **Bajar el plan de un org no revoca los access tokens ya emitidos**:
+  mismo mecanismo (y mismo riesgo) que degradar un rol — alguien con un
+  token de un momento en que el org era `pro` sigue pudiendo exportar CSV
+  hasta que ese token expire o se refresque. Ventana máxima: 15 minutos.
+- **`PATCH /organizations/plan` no valida nada de un pago real** — es,
+  literalmente, "cualquier admin puede subir o bajar el plan de su propia
+  organización con un click". Correcto para esta fase (no hay proveedor
+  de billing conectado), pero si se conecta uno real, este endpoint deja
+  de ser seguro para exponerlo tal cual: necesitaría, como mínimo,
+  quedar detrás de una verificación de firma de webhook y dejar de
+  aceptar el plan como input directo del cliente.
 - **Degradar el rol de un usuario no revoca su access token vigente**: si
   un admin le quita permisos de admin a alguien, esa persona conserva su
   rol viejo en el JWT hasta que expira (15 min) o hasta su próximo
@@ -137,3 +150,11 @@ aceptarse dos veces, que un `member` no puede invitar (403), y que un
 refresh token usado dos veces falla la segunda vez. Es la misma disciplina
 de "probar que el ataque falla", aplicada a los flujos que Sprint 2
 agregó.
+
+`backend/test/plan/plan.e2e-spec.ts` y `backend/test/audit-log/audit-log.e2e-spec.ts`
+(Sprint 5) hacen lo mismo para el gating por plan y el registro de
+auditoría — incluyendo, en `test/rls/`, los tres casos que prueban
+`audit_log` a nivel de política Y de privilegio (no alcanza con que RLS
+oculte filas de otro org: `tenanthub_app` ni siquiera tiene permiso de
+`DELETE`, así que un intento de borrar auditoría falla por falta de
+privilegio antes de que RLS tenga que intervenir).

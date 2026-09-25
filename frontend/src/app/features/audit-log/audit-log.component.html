@@ -1,0 +1,49 @@
+<div class="audit-page">
+  <header>
+    <h1>Auditoría</h1>
+    <a routerLink="/dashboard">← Volver</a>
+  </header>
+
+  @if (error()) {
+    <p class="error">{{ error() }}</p>
+  }
+  @if (!error() && loading()) {
+    <p>Cargando…</p>
+  }
+  @if (!error() && !loading() && result(); as r) {
+    @if (r.items.length === 0) {
+      <p class="empty">Todavía no hay actividad registrada.</p>
+    } @else {
+      <table>
+        <thead>
+          <tr>
+            <th>Cuándo</th>
+            <th>Quién</th>
+            <th>Acción</th>
+            <th>Entidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (entry of r.items; track entry.id) {
+            <tr>
+              <td>{{ entry.createdAt | date: 'short' }}</td>
+              <td>{{ entry.actor?.email ?? '—' }}</td>
+              <td><code>{{ entry.action }}</code></td>
+              <td>{{ entry.entity }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      <div class="pagination">
+        <button type="button" [disabled]="r.page <= 1" (click)="goToPage(r.page - 1)">
+          Anterior
+        </button>
+        <span>Página {{ r.page }} de {{ totalPages }} ({{ r.total }} entradas)</span>
+        <button type="button" [disabled]="r.page >= totalPages" (click)="goToPage(r.page + 1)">
+          Siguiente
+        </button>
+      </div>
+    }
+  }
+</div>

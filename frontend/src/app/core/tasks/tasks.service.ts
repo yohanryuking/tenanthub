@@ -28,4 +28,9 @@ export class TasksService {
   remove(id: string) {
     return this.http.delete<void>(`${environment.apiUrl}/tasks/${id}`);
   }
+
+  /** Gated server-side by PlanGuard/@RequiresPlan('pro') — a free org gets a 403 here. */
+  exportCsv() {
+    return this.http.get(`${environment.apiUrl}/tasks/export.csv`, { responseType: 'text' });
+  }
 }

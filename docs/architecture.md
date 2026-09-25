@@ -1,11 +1,10 @@
 # Arquitectura — TenantHub
 
-> Estado: Sprint 0 a 4 implementados (modelo multi-tenant con RLS +
-> auth/onboarding completo + `tasks` como feature real + roles/permisos:
-> `RolesGuard` reutilizable, gestión de miembros con protección del
-> último admin). Este documento describe lo que existe hoy y cómo encaja
-> con lo que falta — ver `roadmap.md` para el detalle de los sprints
-> pendientes.
+> Estado: Sprint 0 a 5 implementados (modelo multi-tenant con RLS +
+> auth/onboarding completo + `tasks` como feature real + roles/permisos +
+> planes/feature flags + audit log). Este documento describe lo que existe
+> hoy y cómo encaja con lo que falta — ver `roadmap.md` para el detalle de
+> los sprints pendientes.
 
 ## Resumen
 
@@ -231,6 +230,67 @@ o su próximo login. Es un trade-off consciente: consultar `memberships` en
 cada request para evitar esta latencia anularía el punto de tener un JWT
 stateless.
 
+## Planes y feature flags (Sprint 5)
+
+`PlanGuard` + `@RequiresPlan('pro')` (`backend/src/common/plan/`) es el
+mismo patrón que `RolesGuard`, comparando `request.tenant.plan` — pero con
+un detalle distinto: **el plan no viaja en el JWT desde Sprint 1 como el
+rol** (no existía el concepto todavía), así que Sprint 5 tuvo que agregarlo
+a las **cuatro** funciones SQL que emiten tokens
+(`auth_login_lookup`, `auth_register`, `auth_accept_invitation`,
+`auth_consume_refresh_token`) — cada una hace `DROP FUNCTION` +
+`CREATE FUNCTION` con una columna de salida más, en
+`20260925090000_sprint5_plan_and_audit_functions/migration.sql`. Mismo
+trade-off que el rol: un cambio de plan tarda hasta el próximo
+refresh/login en reflejarse para una sesión ya abierta.
+
+`GET /tasks/export.csv` es el único endpoint realmente gateado
+(`@RequiresPlan('pro')`); `PATCH /organizations/plan` (solo `admin`) es el
+sustituto de un webhook de billing real — cambia la columna `plan` de
+`organizations` directamente, con un comentario en el código señalando
+exactamente qué reemplazaría una integración real (quién llama el método,
+no su cuerpo). Ver ADR pendiente / roadmap Sprint 6 para cuándo conectar
+un proveedor real.
+
+### Audit log
+
+`AuditLogService` + `@Audit(action, entity)` + `AuditInterceptor`
+(`backend/src/common/audit/`) — a diferencia de `TenantGuard`/
+`TenantInterceptor`, **`AuditInterceptor` nunca es global**: se aplica
+ruta por ruta con `@UseInterceptors(AuditInterceptor)` junto al decorator,
+porque solo un puñado de acciones son sensibles (login, cambio de plan,
+invitación, cambio de rol, borrado de tarea) y auditar todo sin criterio
+generaría ruido, no señal.
+
+El interceptor corre **anidado dentro de la transacción abierta por
+`TenantInterceptor`** (un interceptor local queda más cerca del handler
+que uno global, como capas de una cebolla), así que el `INSERT` en
+`audit_log` es parte de la misma transacción que la acción que audita: si
+algo falla después, ambos se revierten juntos.
+
+La única acción auditada que **no** tiene contexto de tenant es el login
+(por la misma razón que necesita `auth_login_lookup`): usa
+`AuditLogService.writeCrossTenant()`, que pasa por una función SQL
+`SECURITY DEFINER` más (`audit_write_cross_tenant`), exactamente el mismo
+patrón angosto que el resto de los cruces de tenant documentados en este
+archivo. Las otras cuatro acciones auditadas usan
+`AuditLogService.write()`, que es una inserción completamente ordinaria a
+través de `tenantContext.getClient()` — ningún privilegio especial, RLS
+normal.
+
+**Bug real, encontrado probando el flujo completo, no con un test
+aislado**: la primera versión de `AuditInterceptor` disparaba el `write()`
+dentro de un `tap()` de RxJS sin esperar la promesa. `tap` no espera
+callbacks async, así que el `INSERT` podía terminar de ejecutarse después
+de que la transacción envolvente ya hubiera hecho commit — la fila de
+auditoría se perdía en silencio, sin ningún error en los logs, y
+`GET /audit-log` mostraba `total: 0` siempre. El fix fue reemplazar
+`tap()` por `concatMap()` con una función async, para que el write quede
+genuinamente encadenado al stream que `TenantInterceptor` espera antes de
+cerrar la transacción. Queda como recordatorio de por qué "compila y los
+tipos cierran" no es lo mismo que "funciona": este bug no aparecía en
+`tsc` ni en `eslint`, solo llamando al endpoint real.
+
 ## Frontend (Angular)
 
 `frontend/src/app/core/auth/`:
@@ -254,16 +314,32 @@ stateless.
   si se apretara). Soporta `; else plantilla` para mostrar una alternativa
   en vez de nada (ej. un badge de solo lectura en `/members`).
 
+`frontend/src/app/core/organizations/`: `InvitationsService`,
+`MembershipsService`, `OrganizationService` (plan actual + cambiarlo) y
+`AuditLogService` (listado paginado) — todos clientes HTTP delgados, sin
+lógica propia; la autorización real vive en el backend, estos solo
+reflejan lo que el servidor ya decidió.
+
 Rutas: `/login`, `/register`, `/accept-invitation/:token` (públicas),
-`/dashboard`, `/tasks` y `/members` (protegidas por `authGuard`). El
-dashboard quedó con la info de la organización, el formulario de
-invitación (detrás de `*appHasRole="'admin'"`) y links a `/tasks` y
-`/members`; `tasks` (Sprint 3) es su propia feature con listado paginado,
-filtros por texto/estado (debounced) y edición inline; `members` (Sprint
-4, `frontend/src/app/features/members/`) lista los miembros de la
-organización con un `<select>` de rol por fila si sos admin, o un badge
-de solo lectura si no. Todas reutilizan el mismo
-`authGuard`/`authInterceptor` de Sprint 2 sin tocarlos.
+`/dashboard`, `/tasks`, `/members` y `/audit-log` (protegidas por
+`authGuard`). El dashboard tiene la info de la organización (incluido un
+badge de plan), el formulario de invitación, un botón para cambiar de
+plan y un link a `/audit-log` — los tres últimos detrás de
+`*appHasRole="'admin'"`; `tasks` (Sprint 3) agrega en Sprint 5 un botón
+"Exportar CSV" que llama al endpoint gateado por plan y muestra el 403
+como un mensaje en vez de un error crudo; `members` (Sprint 4) lista
+miembros con cambio de rol; `audit-log` (Sprint 5,
+`frontend/src/app/features/audit-log/`) es una tabla paginada de
+acción/actor/entidad, protegida tanto por `*appHasRole` (oculta el link)
+como por el propio 403 del backend si alguien navega ahí directamente.
+Todas reutilizan el mismo `authGuard`/`authInterceptor` de Sprint 2 sin
+tocarlos.
+
+Cambiar el plan desde el dashboard llama a `auth.refresh()` inmediatamente
+después de un cambio exitoso, para que la propia sesión del admin vea el
+efecto sin tener que desloguearse — un extra de UX sobre el comportamiento
+"tarda hasta el próximo refresh" que sigue siendo la garantía real (y la
+que los tests verifican).
 
 ## Modelo de datos
 
@@ -274,7 +350,7 @@ memberships (org_id, user_id, role)             -- une user ↔ organization
 invitations (org_id, email, role, token_hash, expires_at, accepted_at)  -- Sprint 2
 refresh_tokens (user_id, org_id, token_hash, expires_at, revoked_at)     -- Sprint 2
 tasks (id, org_id, title, ..., created_by)      -- dominio de ejemplo (Sprint 3 lo expande)
-audit_log (id, org_id, actor_id, action, ...)    -- tabla y RLS listas; Sprint 5 escribe en ella
+audit_log (id, org_id, actor_id, action, entity, entity_id, metadata)    -- Sprint 5 escribe en ella
 ```
 
 Todas menos `users` tienen `ENABLE ROW LEVEL SECURITY` + policy
@@ -283,10 +359,13 @@ Todas menos `users` tienen `ENABLE ROW LEVEL SECURITY` + policy
 vive en `memberships`, así que un mismo usuario puede pertenecer a varias
 organizaciones (patrón Slack/Notion) sin duplicar filas de usuario.
 
-`plans` no es una tabla separada todavía — es una columna `plan` en
-`organizations` (`free`/`pro`). El *gating* por plan (bloquear una acción
-si el plan no alcanza) es contenido de Sprint 5; la columna existe desde
-ya para no requerir una migración destructiva más adelante.
+`plans` no es una tabla separada — es la columna `plan` en
+`organizations` (`free`/`pro`), presente desde Sprint 1 justamente para no
+requerir una migración destructiva cuando Sprint 5 implementó el gating.
+`audit_log` no tiene `DELETE` otorgado a `tenanthub_app` (revocado
+explícitamente en la migración de RLS de Sprint 1) — ni siquiera un
+compromiso completo de la conexión de la app puede borrar el historial de
+su propio org, solo insertar en él.
 
 ## Estructura del repo
 
@@ -303,29 +382,34 @@ tenanthub/
 │   │       ├── 20260921140703_invitations_and_refresh_tokens/ -- tablas Sprint 2
 │   │       ├── 20260921141500_sprint2_auth_functions/         -- register, accept-invite, refresh
 │   │       ├── 20260921143000_invitation_lookup_function/
-│   │       └── 20260921144500_fix_accept_invitation_ambiguity/
+│   │       ├── 20260921144500_fix_accept_invitation_ambiguity/
+│   │       └── 20260925090000_sprint5_plan_and_audit_functions/ -- plan en el JWT + audit_write_cross_tenant
 │   ├── src/
 │   │   ├── common/
 │   │   │   ├── prisma/          -- PrismaService (conecta como tenanthub_app)
 │   │   │   ├── tenant/          -- Guard, Interceptor, AsyncLocalStorage, decorators
-│   │   │   └── roles/            -- RolesGuard + @Roles() (Sprint 4)
+│   │   │   ├── roles/            -- RolesGuard + @Roles() (Sprint 4)
+│   │   │   ├── plan/             -- PlanGuard + @RequiresPlan() (Sprint 5)
+│   │   │   └── audit/            -- AuditLogService, @Audit(), AuditInterceptor (Sprint 5)
 │   │   ├── auth/                -- register, login, orgs, refresh, logout, accept-invitation
-│   │   ├── organizations/       -- invitaciones (crear, listar) + memberships (listar, cambiar rol)
-│   │   ├── tasks/                -- CRUD + paginación/filtros, cero filtros manuales por org
+│   │   ├── organizations/       -- invitaciones, memberships, plan de la org, audit log
+│   │   ├── tasks/                -- CRUD + paginación/filtros + export.csv, cero filtros manuales por org
 │   │   └── health/
 │   └── test/
-│       ├── rls/                  -- tests negativos de RLS contra Postgres real
+│       ├── rls/                  -- tests negativos de RLS contra Postgres real (incl. audit_log)
 │       ├── auth/                  -- tests e2e de los flujos de auth/onboarding sobre HTTP
 │       ├── tasks/                 -- tests e2e de paginación/filtros/update/delete + 404 cruzado
-│       └── memberships/            -- tests e2e de RolesGuard, cambio de rol, último-admin
-├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks, members
+│       ├── memberships/            -- tests e2e de RolesGuard, cambio de rol, último-admin
+│       ├── plan/                    -- tests e2e de PlanGuard/@RequiresPlan
+│       └── audit-log/                -- tests e2e de que las 5 acciones sensibles quedan auditadas
+├── frontend/                # Angular: login, registro, aceptar invitación, dashboard, tasks, members, audit-log
 │   ├── e2e/                  -- suite Playwright (crear→ver→editar→completar→eliminar, filtros, paginación)
 │   ├── playwright.config.ts
 │   └── src/app/
 │       ├── core/auth/            -- AuthService, guard, interceptor (JWT + refresh), HasRoleDirective
-│       ├── core/tasks/            -- TasksService
-│       ├── core/organizations/    -- InvitationsService, MembershipsService
-│       └── features/              -- login, register, accept-invitation, dashboard, tasks, members
+│       ├── core/tasks/            -- TasksService (incl. exportCsv)
+│       ├── core/organizations/    -- InvitationsService, MembershipsService, OrganizationService, AuditLogService
+│       └── features/              -- login, register, accept-invitation, dashboard, tasks, members, audit-log
 ├── docs/
 │   ├── architecture.md      -- este archivo
 │   ├── roadmap.md
@@ -395,6 +479,20 @@ npm start
   ve recién tras un refresh, el admin único no puede degradarse a sí
   mismo (409) pero sí una vez que hay dos admins, y un id de membership de
   otra organización da 404 (nunca 403).
+- `test/plan/plan.e2e-spec.ts` (backend, Sprint 5): el export CSV falla
+  con 403 en plan free, funciona en plan pro (con el token refrescado),
+  sigue fallando con el token viejo aunque el plan ya haya cambiado
+  (`PlanGuard` confía en el JWT, no en una consulta a la base en cada
+  request), y un `member` no puede cambiar el plan.
+- `test/audit-log/audit-log.e2e-spec.ts` (backend, Sprint 5): las cinco
+  acciones auditadas (login, cambio de plan, invitación, cambio de rol,
+  borrado de tarea) efectivamente dejan una fila cada una, un `member` no
+  puede leer `/audit-log` (403), y las entradas de una organización nunca
+  aparecen en el listado de otra. `test/rls/rls.e2e-spec.ts` suma 3 casos
+  más específicos de `audit_log`: lectura cruzada bloqueada, `INSERT`
+  falsificando `org_id` rechazado por `WITH CHECK`, y que `tenanthub_app`
+  no puede hacer `DELETE` ahí ni para su propio org (privilegio revocado,
+  no solo una policy).
 - Frontend: `npm test` (Angular/Karma) para unit tests; el flujo de roles
   (invitar → aceptar → el member no ve la UI de admin → promoverlo →
   demostrar que sigue sin poder actuar como admin hasta refrescar su
@@ -402,7 +500,12 @@ npm start
   admin único no puede degradarse) se verificó con un script Playwright
   ad-hoc contra un browser real, igual que el de Sprint 2 — no es parte
   de la suite versionada porque el roadmap de Sprint 4 solo pedía tests
-  de autorización a nivel de backend, no e2e de Angular.
+  de autorización a nivel de backend, no e2e de Angular. El flujo de
+  planes/auditoría de Sprint 5 (badge de plan → export bloqueado en free →
+  upgrade → auto-refresh → export funciona → auditoría lista las 5
+  acciones → un member invitado no ve ninguna sección de admin ni puede
+  navegar directo a `/audit-log`) se verificó de la misma manera, por la
+  misma razón.
   `frontend/e2e/tasks.spec.ts` (Playwright, Sprint 3) cubre
   crear→ver→editar→completar→eliminar, filtros por texto/estado, y
   paginación, contra un browser real. Requiere el backend corriendo por
@@ -426,6 +529,10 @@ de alcance de esta fase:
   devuelve en la respuesta HTTP, sin proveedor SMTP).
 - Detección de reuso de un refresh token ya consumido como señal de robo
   (hoy simplemente falla con 401 — ver ADR 0005).
-- Feature flags por plan, botón de cambio de plan, escritura real en
-  `audit_log` (Sprint 5).
+- Integración real de billing (Stripe u otro): `PATCH /organizations/plan`
+  es un simulacro manual, sin webhook ni pasarela de pago.
+- Feature flags más allá del único gate de plan implementado
+  (`export.csv`) — el mecanismo (`PlanGuard`/`@RequiresPlan`) es
+  reutilizable para más features, pero no se agregaron más porque Sprint 5
+  no pedía más de un ejemplo concreto.
 - Deploy productivo (Sprint 6).

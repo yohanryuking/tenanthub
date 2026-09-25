@@ -18,6 +18,8 @@ let orgA: string;
 let orgB: string;
 let taskA: string;
 let taskB: string;
+let auditA: string;
+let auditB: string;
 
 async function appClientAs(orgId: string | null): Promise<Client> {
   const client = new Client({ connectionString: process.env.APP_DATABASE_URL });
@@ -45,6 +47,8 @@ beforeEach(async () => {
   orgB = randomUUID();
   taskA = randomUUID();
   taskB = randomUUID();
+  auditA = randomUUID();
+  auditB = randomUUID();
 
   await admin.query(
     `INSERT INTO organizations (id, name, slug, updated_at) VALUES
@@ -59,9 +63,17 @@ beforeEach(async () => {
        ($2, $4, 'Task belonging to Org B', $4, now())`,
     [taskA, taskB, orgA, orgB],
   );
+
+  await admin.query(
+    `INSERT INTO audit_log (id, org_id, action, entity) VALUES
+       ($1, $3, 'test.seeded', 'test'),
+       ($2, $4, 'test.seeded', 'test')`,
+    [auditA, auditB, orgA, orgB],
+  );
 });
 
 afterEach(async () => {
+  await admin.query('DELETE FROM audit_log WHERE org_id IN ($1, $2)', [orgA, orgB]);
   await admin.query('DELETE FROM tasks WHERE org_id IN ($1, $2)', [orgA, orgB]);
   await admin.query('DELETE FROM organizations WHERE id IN ($1, $2)', [
     orgA,
@@ -158,6 +170,48 @@ describe('Row-Level Security — tenant isolation', () => {
       const res = await client.query('SELECT id FROM organizations');
       const ids = res.rows.map((r) => r.id);
       expect(ids).toEqual([orgA]);
+    } finally {
+      await client.end();
+    }
+  });
+});
+
+describe('Row-Level Security — audit_log (Sprint 5)', () => {
+  it('a session scoped to org A cannot read org B audit entries', async () => {
+    const client = await appClientAs(orgA);
+    try {
+      const res = await client.query('SELECT id FROM audit_log');
+      const ids = res.rows.map((r) => r.id);
+      expect(ids).toContain(auditA);
+      expect(ids).not.toContain(auditB);
+    } finally {
+      await client.end();
+    }
+  });
+
+  it('a session scoped to org B cannot INSERT an audit row claiming to belong to org A (WITH CHECK)', async () => {
+    const client = await appClientAs(orgB);
+    try {
+      await expect(
+        client.query(
+          `INSERT INTO audit_log (id, org_id, action, entity) VALUES ($1, $2, 'forged.action', 'test')`,
+          [randomUUID(), orgA],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+    } finally {
+      await client.end();
+    }
+  });
+
+  it("tenanthub_app cannot DELETE audit_log rows, even its own org's", async () => {
+    // Separate from RLS: DELETE was revoked from tenanthub_app entirely
+    // (see the Sprint 1 RLS migration) so the audit trail can't be erased
+    // even by a fully compromised app connection scoped to the right org.
+    const client = await appClientAs(orgA);
+    try {
+      await expect(
+        client.query('DELETE FROM audit_log WHERE id = $1', [auditA]),
+      ).rejects.toThrow(/permission denied/i);
     } finally {
       await client.end();
     }

@@ -19,6 +19,26 @@ header a {
   text-decoration: none;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.export-button {
+  padding: 0.35rem 0.75rem;
+  border: 1px solid #cbd2d9;
+  border-radius: 6px;
+  background: white;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.error {
+  color: #c0392b;
+  font-size: 0.875rem;
+}
+
 .add-form,
 .filter-form {
   display: flex;
