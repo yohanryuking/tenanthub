@@ -1,71 +1,73 @@
 # tenanthub
 
-Micro-SaaS multi-tenant donde el aislamiento entre organizaciones lo
-garantiza Row-Level Security de PostgreSQL — no un `WHERE org_id = ...`
-que el backend podría olvidar. Stack: **Angular** · **NestJS** ·
-**PostgreSQL + Prisma** (sin Supabase — ver
+🇪🇸 Versão em espanhol: [README.es.md](README.es.md)
+
+Micro-SaaS multi-tenant em que o isolamento entre organizações é
+garantido pelo Row-Level Security do PostgreSQL — e não por um
+`WHERE org_id = ...` que o backend poderia esquecer. Stack: **Angular** ·
+**NestJS** · **PostgreSQL + Prisma** (sem Supabase — ver
 [ADR 0001](docs/decisions/0001-postgres-managed-over-supabase.md)).
 
-🎥 [Video demo](demo/tenanthub-demo.webm) (~43s, generado con Playwright
-contra la app real): dos organizaciones aisladas, gating por plan, y
-audit log en acción.
+🎥 [Vídeo demo](demo/tenanthub-demo.webm) (~43s, gerado com Playwright
+contra a aplicação real): duas organizações isoladas, gating por plano e
+audit log em ação.
 
-## Estado actual: Sprint 0 a 5, Sprint 6 preparado
+## Status atual: Sprints 0 a 5 concluídos, Sprint 6 preparado
 
-Implementado y probado:
+Implementado e testado:
 
-- Modelo de datos multi-tenant (`organizations`, `users`, `memberships`,
-  `invitations`, `refresh_tokens`, `tasks`, `audit_log`) con RLS
-  deny-by-default en cada tabla tenant-scoped.
-- Rol de aplicación no-owner (`tenanthub_app`) que RLS realmente
-  restringe — el backend nunca se conecta con un rol que bypasse RLS.
-- 10 tests **negativos** de RLS contra Postgres real: intentan leer,
-  actualizar, borrar e insertar datos de otro tenant (o borrar auditoría
-  sin tener el privilegio), y verifican que todo eso falle.
-- Onboarding completo: registro (crea org + admin en un paso), login con
-  selector de organización, invitar miembros, aceptar invitación, sesión
-  sostenida con refresh tokens rotados (access token de 15 min).
-- `tasks` como feature real: paginación, filtros por texto/estado,
-  edición inline, marcar completada, borrar — con su propia ruta
-  `/tasks` en Angular. Un id de otra organización siempre da 404, nunca
-  403, para no filtrar que la fila existe.
-- Roles y permisos: `RolesGuard`/`@Roles()` reutilizable en el backend,
-  gestión de miembros (`/members`) con cambio de rol protegido — una
-  organización nunca puede quedarse sin ningún admin, ni siquiera bajo
-  dos requests concurrentes.
-- Planes y auditoría: `PlanGuard`/`@RequiresPlan('pro')` gatea el export
-  de CSV de tareas; un admin puede cambiar el plan de su org (simulando
-  un webhook de billing); las cinco acciones sensibles (login, cambio de
-  plan, invitación, cambio de rol, borrado de tarea) quedan registradas
-  en `/audit-log`, visible solo para admins.
-- 38 tests e2e de backend sobre HTTP real y SQL directo, más 1 unit test
-  — 39 en total, la mayoría verificando que un ataque falla, no solo que
-  el camino feliz funciona. Más una suite Playwright versionada
-  (`frontend/e2e/`) contra un browser real.
-- CI (backend, frontend y un job e2e full-stack) que levanta Postgres,
-  aplica migraciones y corre toda la suite en cada push/PR — con un job
-  `deploy` gateado por esos mismos tests (Sprint 6, ver más abajo).
+- Modelo de dados multi-tenant (`organizations`, `users`, `memberships`,
+  `invitations`, `refresh_tokens`, `tasks`, `audit_log`) com RLS
+  deny-by-default em cada tabela tenant-scoped.
+- Role de aplicação não-owner (`tenanthub_app`) que o RLS realmente
+  restringe — o backend nunca se conecta com uma role que faça bypass do RLS.
+- 10 testes **negativos** de RLS contra um Postgres real: tentam ler,
+  atualizar, excluir e inserir dados de outro tenant (ou excluir registros
+  de auditoria sem ter o privilégio) e verificam que tudo isso falha.
+- Onboarding completo: cadastro (cria org + admin em um único passo), login
+  com seletor de organização, convite de membros, aceite de convite e sessão
+  mantida com refresh tokens rotacionados (access token de 15 min).
+- `tasks` como feature real: paginação, filtros por texto/status,
+  edição inline, marcar como concluída, excluir — com rota própria
+  `/tasks` no Angular. Um id de outra organização sempre retorna 404, nunca
+  403, para não revelar que a linha existe.
+- Roles e permissões: `RolesGuard`/`@Roles()` reutilizável no backend,
+  gestão de membros (`/members`) com troca de role protegida — uma
+  organização nunca pode ficar sem nenhum admin, nem mesmo sob
+  duas requisições concorrentes.
+- Planos e auditoria: `PlanGuard`/`@RequiresPlan('pro')` controla o acesso
+  ao export de CSV de tarefas; um admin pode alterar o plano da sua org
+  (simulando um webhook de billing); as cinco ações sensíveis (login, troca
+  de plano, convite, troca de role, exclusão de tarefa) ficam registradas
+  em `/audit-log`, visível apenas para admins.
+- 38 testes e2e de backend sobre HTTP real e SQL direto, mais 1 teste
+  unitário — 39 no total, a maioria verificando que um ataque falha, e não
+  apenas que o caminho feliz funciona. Além de uma suíte Playwright versionada
+  (`frontend/e2e/`) contra um browser real.
+- CI (backend, frontend e um job e2e full-stack) que sobe o Postgres,
+  aplica as migrations e roda a suíte completa a cada push/PR — com um job
+  `deploy` condicionado a esses mesmos testes (Sprint 6, ver abaixo).
 
-Preparado pero **no ejecutado** (este entorno de desarrollo no tiene
-credenciales de ningún proveedor de hosting): `Dockerfile` del backend,
-blueprint de Render (`render.yaml`) + config de Vercel
-(`frontend/vercel.json`), y los jobs de CI que dispararían el deploy real
-una vez configurados los secrets. Guía completa, paso a paso, en
+Preparado, mas **não executado** (este ambiente de desenvolvimento não tem
+credenciais de nenhum provedor de hospedagem): `Dockerfile` do backend,
+blueprint do Render (`render.yaml`) + configuração da Vercel
+(`frontend/vercel.json`) e os jobs de CI que disparariam o deploy real
+depois que os secrets forem configurados. Guia completo, passo a passo, em
 **[docs/deploy.md](docs/deploy.md)**.
 
-Para el detalle completo, sprint por sprint (lo que falta y por qué), ver
+Para o detalhamento completo, sprint por sprint (o que falta e por quê), ver
 **[docs/roadmap.md](docs/roadmap.md)**.
 
-## Documentación
+## Documentação
 
-| Archivo | Contenido |
+| Arquivo | Conteúdo |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | Cómo funciona el aislamiento de principio a fin, estructura del repo, cómo correr todo |
-| [docs/roadmap.md](docs/roadmap.md) | Qué está hecho y qué falta, sprint por sprint |
-| [docs/threat-model.md](docs/threat-model.md) | Qué ataques se probaron, qué mitiga cada cosa, riesgo residual documentado |
-| [docs/deploy.md](docs/deploy.md) | Deploy real: Render (backend + Postgres) + Vercel (frontend), paso a paso |
-| [docs/decisions/](docs/decisions/) | ADRs: por qué Postgres normal en vez de Supabase, por qué Prisma, diseño de roles de RLS, auth propia, refresh tokens, plan/audit log |
-| [demo/](demo/) | Video demo + qué muestra cada paso |
+| [docs/architecture.md](docs/architecture.md) | Como o isolamento funciona de ponta a ponta, estrutura do repositório, como rodar tudo |
+| [docs/roadmap.md](docs/roadmap.md) | O que está pronto e o que falta, sprint por sprint |
+| [docs/threat-model.md](docs/threat-model.md) | Quais ataques foram testados, o que cada mecanismo mitiga, risco residual documentado |
+| [docs/deploy.md](docs/deploy.md) | Deploy real: Render (backend + Postgres) + Vercel (frontend), passo a passo |
+| [docs/decisions/](docs/decisions/) | ADRs: por que Postgres comum em vez de Supabase, por que Prisma, design das roles de RLS, autenticação própria, refresh tokens, plano/audit log |
+| [demo/](demo/) | Vídeo demo + o que cada etapa mostra |
 
 ## Quickstart
 
@@ -86,27 +88,27 @@ npm install
 npm start
 ```
 
-Probar el aislamiento (vía API):
+Testar o isolamento (via API):
 
 ```bash
 curl -X POST localhost:3000/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"alice@acme.test","password":"password123","orgSlug":"acme"}'
-# copiar accessToken del response
+# copiar o accessToken da resposta
 curl localhost:3000/tasks -H "Authorization: Bearer <accessToken>"
 ```
 
-O directamente en el navegador: `http://localhost:4200/register` para
-crear una organización nueva, o `http://localhost:4200/login` con
-`alice@acme.test` / `password123` / org `acme` (usuarios del seed).
+Ou diretamente no navegador: `http://localhost:4200/register` para
+criar uma nova organização, ou `http://localhost:4200/login` com
+`alice@acme.test` / `password123` / org `acme` (usuários do seed).
 
-## Tests
+## Testes
 
 ```bash
 cd backend
-npm test         # unit tests
-npm run test:e2e # RLS negativos + flujos de auth/onboarding + tasks, sobre HTTP real
+npm test         # testes unitários
+npm run test:e2e # RLS negativos + fluxos de auth/onboarding + tasks, sobre HTTP real
 
 cd ../frontend
-npm test         # unit tests (Karma)
-npm run e2e      # Playwright — requiere el backend corriendo (ver frontend/README.md)
+npm test         # testes unitários (Karma)
+npm run e2e      # Playwright — requer o backend rodando (ver frontend/README.md)
 ```
